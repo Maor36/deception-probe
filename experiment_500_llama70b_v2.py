@@ -37,7 +37,7 @@ Expected runtime on A100: ~90-120 minutes
 """
 
 import subprocess
-subprocess.run(["pip", "install", "-q", "transformers==4.44.0", "accelerate", "torch",
+subprocess.run(["pip", "install", "-q", "transformers>=4.45.0", "accelerate", "torch",
                 "scikit-learn", "scipy", "bitsandbytes", "huggingface_hub"], check=True)
 
 # Authenticate with HuggingFace for gated Llama model
@@ -1552,14 +1552,35 @@ if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 print(f"  Tokenizer loaded ✓")
 
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_NAME,
-    quantization_config=bnb_config,
-    output_hidden_states=True,
-    device_map="auto",
-    token=HF_TOKEN,
-    low_cpu_mem_usage=True,
-)
+# Set max memory to avoid OOM
+max_mem = {0: "70GiB", "cpu": "80GiB"}
+
+try:
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        quantization_config=bnb_config,
+        output_hidden_states=True,
+        device_map="auto",
+        max_memory=max_mem,
+        torch_dtype=torch.float16,
+        token=HF_TOKEN,
+        low_cpu_mem_usage=True,
+    )
+except Exception as e:
+    print(f"First attempt failed: {e}")
+    print("Retrying with device_map='sequential'...")
+    gc.collect()
+    torch.cuda.empty_cache()
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        quantization_config=bnb_config,
+        output_hidden_states=True,
+        device_map="sequential",
+        max_memory=max_mem,
+        torch_dtype=torch.float16,
+        token=HF_TOKEN,
+        low_cpu_mem_usage=True,
+    )
 model.eval()
 print(f"  Model loaded ✓")
 
