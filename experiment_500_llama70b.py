@@ -39,8 +39,14 @@ Expected runtime on A100: ~60-90 minutes
 """
 
 import subprocess
-subprocess.run(["pip", "install", "-q", "transformers", "accelerate", "torch",
-                "scikit-learn", "scipy", "bitsandbytes"], check=True)
+subprocess.run(["pip", "install", "-q", "transformers==4.44.0", "accelerate", "torch",
+                "scikit-learn", "scipy", "bitsandbytes", "huggingface_hub"], check=True)
+
+# Authenticate with HuggingFace for gated models (Llama)
+from huggingface_hub import login
+HF_TOKEN = "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"
+login(token=HF_TOKEN)
+print("HuggingFace authentication successful ✓")
 
 import torch
 import numpy as np
@@ -66,8 +72,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SAVE_DIR = Path("/content/results_llama70b")
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL_NAME = "meta-llama/Llama-3.1-70B-Instruct"
-TARGET_LAYER = 40  # Middle of 80 layers
+MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"  # 8B fits easily on A100
+TARGET_LAYER = 16  # Middle of 32 layers
 TRAIN_RATIO = 0.8
 TRUNCATION_TOKENS = 20
 SEED = 42
@@ -1525,45 +1531,63 @@ FALLBACK_LAYER = 16  # Middle of 32 layers
 
 print(f"\n{'='*60}")
 print(f"LOADING MODEL: {MODEL_NAME}")
-print(f"Using 4-bit quantization (BitsAndBytes NF4)")
 print(f"{'='*60}")
 
 monitor_resources("BEFORE MODEL DOWNLOAD")
 
 # Check if we have enough disk space for 70B (~140GB download)
 free_gb = check_disk_space()
-if free_gb < 80:
-    print(f"\n⚠️ WARNING: Only {free_gb:.0f} GB free. 70B needs ~140GB during download.")
-    print(f"   Will attempt anyway with streaming download...")
-    print(f"   If it fails, will fall back to {FALLBACK_MODEL}")
+use_quantization = False
 
-bnb_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_compute_dtype=torch.float16,
-    bnb_4bit_use_double_quant=True,
-)
+if "70b" in MODEL_NAME.lower() or "70B" in MODEL_NAME:
+    use_quantization = True
+    print(f"Using 4-bit quantization (BitsAndBytes NF4) for 70B model")
+    if free_gb < 80:
+        print(f"\n⚠️ WARNING: Only {free_gb:.0f} GB free. 70B needs ~140GB during download.")
+        print(f"   Will fall back to {FALLBACK_MODEL}")
+else:
+    print(f"Using float16 (model fits in A100 80GB without quantization)")
+
+def load_model(model_name, use_quant=False):
+    """Load model with or without quantization."""
+    tok = AutoTokenizer.from_pretrained(model_name, token=HF_TOKEN)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+    print(f"  Tokenizer loaded ✓")
+    
+    if use_quant:
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+        mdl = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            quantization_config=bnb_config,
+            output_hidden_states=True,
+            device_map="auto",
+            token=HF_TOKEN,
+            low_cpu_mem_usage=True,
+        )
+    else:
+        mdl = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16,
+            output_hidden_states=True,
+            device_map="auto",
+            token=HF_TOKEN,
+            low_cpu_mem_usage=True,
+        )
+    mdl.eval()
+    return tok, mdl
 
 try:
-    print(f"\nStep 1/3: Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    print(f"  Tokenizer loaded ✓")
-
-    print(f"Step 2/3: Downloading and loading model (this may take 10-20 min)...")
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
-        quantization_config=bnb_config,
-        trust_remote_code=True,
-        output_hidden_states=True,
-        device_map="auto",
-        low_cpu_mem_usage=True,  # Minimize RAM usage during loading
-    )
-    model.eval()
+    print(f"\nStep 1/2: Loading tokenizer and model...")
+    tokenizer, model = load_model(MODEL_NAME, use_quant=use_quantization)
     print(f"  Model loaded ✓")
 
-    print(f"Step 3/3: Clearing HF cache to free disk space...")
+    print(f"Step 2/2: Clearing HF cache to free disk space...")
     monitor_resources("AFTER MODEL LOAD (before cache clear)")
     clear_hf_cache("llama")
     monitor_resources("AFTER CACHE CLEAR")
@@ -1583,19 +1607,7 @@ except Exception as e:
     torch.cuda.empty_cache()
     clear_hf_cache("llama")
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
-        quantization_config=bnb_config,
-        trust_remote_code=True,
-        output_hidden_states=True,
-        device_map="auto",
-        low_cpu_mem_usage=True,
-    )
-    model.eval()
+    tokenizer, model = load_model(MODEL_NAME, use_quant=False)
     clear_hf_cache("llama")
     print(f"\n*** SUCCESS: Loaded fallback {MODEL_NAME} ***")
 
