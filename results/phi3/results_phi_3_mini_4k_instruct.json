@@ -1,0 +1,140 @@
+{
+  "experiment": "DeceptionProbe \u2014 Llama-3.1-70B-Instruct (Cross-Architecture + Scale Generalization)",
+  "model": "microsoft/Phi-3-mini-4k-instruct",
+  "quantization": "4-bit NF4 (BitsAndBytes)",
+  "target_layer": 16,
+  "total_layers": 32,
+  "hidden_dim": 3072,
+  "total_scenarios": 435,
+  "total_samples": 870,
+  "train_scenarios": 348,
+  "test_scenarios": 87,
+  "categories": {
+    "academic": 25,
+    "credit_application": 25,
+    "criminal": 40,
+    "dating": 20,
+    "government_benefits": 15,
+    "health": 25,
+    "insurance_fraud": 25,
+    "job_interview": 25,
+    "legal_testimony": 20,
+    "real_estate": 20,
+    "relationship": 35,
+    "sales": 35,
+    "social_media": 20,
+    "tax_filing": 20,
+    "white_lie": 50,
+    "workplace": 35
+  },
+  "character_breaks": 9,
+  "main_results": {
+    "cv_accuracy": 0.9640804597701149,
+    "training_accuracy": 1.0,
+    "held_out_accuracy": 0.9540229885057471,
+    "false_positives": 4,
+    "false_negatives": 4
+  },
+  "score_distributions": {
+    "lying_mean": 0.9454829986288857,
+    "lying_std": 0.20264114925376261,
+    "honest_mean": 0.037210608635880944,
+    "honest_std": 0.16730853155858666,
+    "gap": 0.9082723899930047
+  },
+  "length_controls": {
+    "1_correlation": {
+      "r": 0.08839853573496934,
+      "p": 0.009087572485813657
+    },
+    "2_truncation_test": {
+      "truncated_acc": 0.9655172413793104,
+      "full_acc": 0.9540229885057471
+    },
+    "3_residual_regression": {
+      "residualized_acc": 0.9597701149425287,
+      "residual_length_corr": 0.08129104506746138
+    },
+    "4_length_only_baseline": {
+      "length_only_acc": 0.5459770114942529,
+      "probe_acc": 0.9540229885057471
+    },
+    "5_length_matched": {
+      "short_acc": 0.9550561797752809,
+      "long_acc": 0.9529411764705882
+    }
+  },
+  "statistical_validation": {
+    "permutation_p_value": 0.0,
+    "tfidf_baseline_acc": 0.867816091954023
+  },
+  "white_lies": {
+    "detection_accuracy": 0.99,
+    "lying_score_mean": 0.9729960166959107,
+    "serious_lying_score_mean": 0.990552827281286,
+    "t_stat": -1.2531133802355332,
+    "p_value": 0.2108407046024214
+  },
+  "cv_by_category": {
+    "academic": 1.0,
+    "credit_application": 0.9722222222222222,
+    "criminal": 0.9857142857142858,
+    "dating": 0.9411764705882353,
+    "government_benefits": 0.95,
+    "health": 0.9772727272727273,
+    "insurance_fraud": 0.9047619047619048,
+    "job_interview": 0.9705882352941176,
+    "legal_testimony": 0.8928571428571429,
+    "real_estate": 1.0,
+    "relationship": 0.9838709677419355,
+    "sales": 0.98,
+    "social_media": 0.9166666666666666,
+    "tax_filing": 0.9705882352941176,
+    "white_lie": 0.9473684210526315,
+    "workplace": 0.9827586206896551
+  },
+  "test_by_category": {
+    "academic": 0.9166666666666666,
+    "credit_application": 0.9285714285714286,
+    "criminal": 0.9,
+    "dating": 1.0,
+    "government_benefits": 0.9,
+    "health": 1.0,
+    "insurance_fraud": 1.0,
+    "job_interview": 0.9375,
+    "legal_testimony": 1.0,
+    "real_estate": 1.0,
+    "relationship": 0.875,
+    "sales": 0.95,
+    "social_media": 1.0,
+    "tax_filing": 1.0,
+    "white_lie": 0.9583333333333334,
+    "workplace": 1.0
+  },
+  "cross_architecture_comparison": {
+    "qwen_3b": {
+      "test_accuracy": 0.937,
+      "cv_accuracy": 0.958,
+      "length_only_baseline": 0.517,
+      "truncation_test": 0.931,
+      "white_lie_detection": 0.95,
+      "architecture": "MHA"
+    },
+    "mistral_12b": {
+      "test_accuracy": 0.948,
+      "cv_accuracy": 0.947,
+      "length_only_baseline": 0.598,
+      "truncation_test": 0.96,
+      "white_lie_detection": 0.99,
+      "architecture": "SWA+GQA"
+    },
+    "llama_70b": {
+      "test_accuracy": 0.9540229885057471,
+      "cv_accuracy": 0.9640804597701149,
+      "length_only_baseline": 0.5459770114942529,
+      "truncation_test": 0.9655172413793104,
+      "white_lie_detection": 0.99,
+      "architecture": "GQA"
+    }
+  }
+}
