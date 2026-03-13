@@ -40,7 +40,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 print(f"CUDA available: {torch.cuda.is_available()}")
 if torch.cuda.is_available():
     print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+    print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SAVE_DIR = Path("/content/results_llama70b")
@@ -1490,7 +1490,7 @@ model.eval()
 print(f"Loaded! Layers: {model.config.num_hidden_layers}, Hidden dim: {model.config.hidden_size}")
 print(f"Target layer: {TARGET_LAYER}")
 if torch.cuda.is_available():
-    print(f"GPU memory used: {torch.cuda.memory_allocated()/1e9:.1f} GB / {torch.cuda.get_device_properties(0).total_mem/1e9:.1f} GB")
+    print(f"GPU memory used: {torch.cuda.memory_allocated()/1e9:.1f} GB / {torch.cuda.get_device_properties(0).total_memory/1e9:.1f} GB")
 
 # ============================================================
 # PHASE 1: GENERATE RESPONSES (with length control)
