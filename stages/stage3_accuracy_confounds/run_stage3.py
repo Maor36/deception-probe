@@ -418,7 +418,8 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return super().default(obj)
 
-with open("stage3_results.json", "w") as f:
+os.makedirs("results", exist_ok=True)
+with open("results/stage3_results.json", "w") as f:
     json.dump(output, f, indent=2, cls=NumpyEncoder)
 
 # Save example responses
@@ -428,10 +429,10 @@ for d in syco_data[:10]:
 for d in truth_data[:10]:
     examples.append({"question": d["question"], "response": d["response"], "label": "truth"})
 
-with open("stage3_examples.json", "w") as f:
+with open("results/stage3_examples.json", "w") as f:
     json.dump(examples, f, indent=2, ensure_ascii=False, cls=NumpyEncoder)
 
-print(f"  Saved stage3_results.json and stage3_examples.json")
+print(f"  Saved results/stage3_results.json and results/stage3_examples.json")
 print("=" * 60)
 print("STAGE 3 COMPLETE")
 print("=" * 60)

@@ -32,15 +32,13 @@ Most existing work on LLM deception detection suffers from a **prompt confound**
 
 ## Experimental Pipeline
 
-The project is organized into 7 progressive stages:
-
 ### Stages 1-3: Establishing Baselines (Confounded)
 
 These stages replicate prior work and **deliberately identify the prompt confound**.
 
-- **Stage 1** — Basic correlation: probe on sycophancy data with different prompts for truth/lie. Result: 100% accuracy (confounded).
-- **Stage 2** — Cross-model: same test on Mistral-7B. Result: 100% (still confounded).
-- **Stage 3** — Confound analysis: confirms that prompt differences explain the 100% accuracy.
+- **Stage 1** — Basic probe on sycophancy data with different prompts for truth/lie. Result: 100% (confounded).
+- **Stage 2** — Cross-model validation on Mistral-7B. Result: 100% (still confounded).
+- **Stage 3** — Confound analysis confirms prompt differences explain the 100% accuracy.
 
 ### Stage 4: The Real Test (Confound-Free)
 
@@ -52,19 +50,13 @@ These stages replicate prior work and **deliberately identify the prompt confoun
 
 ### Stage 5: Real-World Generalization
 
-Tests deception detection across **18 real-world domains** (medical, legal, financial, etc.) using 459 scenarios where the model must choose between honest and deceptive responses.
+Tests deception detection across **18 real-world domains** (medical, legal, financial, etc.) using 459 scenarios.
 
 **Result: 70.4% balanced accuracy** (chance = 50%, p < 0.001). Best layer: 17.
 
 ### Stage 6: Lie vs Hallucination (The Key Experiment)
 
 Three-way classification: **Truth vs Lie vs Hallucination**.
-
-- Questions the model answers correctly = **Truth**
-- Questions the model answers correctly but changes under pressure = **Lie**
-- Questions the model gets wrong even without pressure = **Hallucination**
-
-**Results:**
 
 | Comparison | Accuracy | Interpretation |
 |-----------|----------|----------------|
@@ -76,25 +68,16 @@ Three-way classification: **Truth vs Lie vs Hallucination**.
 
 ### Stage 7: Advanced Hallucination Detection
 
-Six methods to improve Truth vs Hallucination detection using the hidden states saved from Stage 6:
-1. Multi-layer fusion
-2. Layer difference vectors
-3. Statistical features (norms, variance, entropy)
-4. Combined features with PCA
-5. Hallucination direction (single vector)
-6. Permutation validation
+Six methods to improve Truth vs Hallucination detection:
+multi-layer fusion, layer difference vectors, statistical features, combined PCA, hallucination direction vector, and permutation validation.
 
-### Layer Profile
-
-Across all confound-free stages, **middle layers (15-20)** consistently outperform early and late layers:
+### Layer Profile (Stage 6)
 
 ```
 Layer  0: 33.3% (embedding — chance level)
 Layer  2: 66.6%
-Layer  4: 67.6%
 ...
 Layer 16: 81.9%
-Layer 17: 82.1%
 Layer 18: 82.3%
 Layer 20: 82.3% <-- BEST
 ...
@@ -107,61 +90,56 @@ Layer 0 at chance confirms the signal is **semantic**, not lexical.
 
 ### Prerequisites
 
-- Google Colab with **A100 GPU** (or H100)
+- Google Colab with **A100 GPU**
 - HuggingFace account with access to [Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)
 
 ### Run
 
 ```python
-# 1. Install dependencies
+# Install dependencies
 !pip install -q transformers accelerate bitsandbytes datasets scikit-learn
 
-# 2. Clone repo
+# Clone repo
 !git clone https://github.com/Maor36/deception-probe.git
 %cd deception-probe
 
-# 3. Set HuggingFace token
+# Set HuggingFace token
 import os
 os.environ["HF_TOKEN"] = "your_token_here"
 
-# 4. Run any stage
-%run stages/stage4_same_prompt_test/run_stage4.py          # ~30 min, confound-free
-%run stages/stage6_hallucination/run_stage6.py             # ~25 min, lie vs hallucination
-%run stages/stage7_hallucination_detection/run_stage7.py   # ~5 min, no GPU needed (uses saved data)
+# Run any stage (each stage is self-contained)
+%run stages/stage4_same_prompt_test/run_stage4.py          # ~30 min
+%run stages/stage6_hallucination/run_stage6.py             # ~25 min
+%run stages/stage7_hallucination_detection/run_stage7.py   # ~5 min, no GPU (uses Stage 6 data)
 ```
 
-### Getting a HuggingFace Token
-
-1. Go to [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-2. Create a new token (read access)
-3. Accept the Llama license at [meta-llama/Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)
+All results are saved to `results/` automatically.
 
 ## Repository Structure
 
 ```
 deception-probe/
-├── README.md                    # This file
-├── requirements.txt             # Python dependencies
-├── stages/                      # All experiment stages
-│   ├── stage1_basic_correlation/    # Baseline: sycophancy detection (confounded)
-│   ├── stage2_cross_model/          # Cross-architecture validation
-│   ├── stage3_accuracy_confounds/   # Confound identification
-│   ├── stage4_same_prompt_test/     # Confound-free sycophancy test
-│   ├── stage5_realworld_deception/  # 18-domain real-world deception
-│   ├── stage6_hallucination/        # Lie vs Hallucination (3-way)
-│   └── stage7_hallucination_detection/  # Advanced hallucination methods
-├── results/                     # Experiment results and findings
-│   ├── FINDINGS.md              # Summary of all results
-│   └── stage4_all_layers.txt    # Layer-by-layer Stage 4 results
-├── data/                        # Dataset configs (downloaded at runtime)
-├── phase1_archive/              # Phase 1 scripts (instructed deception)
-└── research_notes/              # Literature review and experiment notes
+├── README.md
+├── requirements.txt
+├── stages/
+│   ├── stage1_basic_correlation/run_stage1.py
+│   ├── stage2_cross_model/run_stage2.py
+│   ├── stage3_accuracy_confounds/run_stage3.py
+│   ├── stage4_same_prompt_test/run_stage4.py
+│   ├── stage5_realworld_deception/
+│   │   ├── run_stage5_part_a.py
+│   │   ├── run_stage5_part_b.py
+│   │   └── scenarios_dataset.json
+│   ├── stage6_hallucination/run_stage6.py
+│   └── stage7_hallucination_detection/run_stage7.py
+└── results/                  ← generated at runtime
+    └── FINDINGS.md           ← summary of all results
 ```
 
 ## Method
 
 - **Model**: Llama-3.1-8B-Instruct (4-bit quantized via bitsandbytes)
-- **Probe**: Logistic Regression on hidden state activations at the first generated token position
+- **Probe**: Logistic Regression on hidden state activations at the first generated token
 - **Validation**: 5-fold stratified cross-validation with balanced accuracy
 - **Statistical tests**: Permutation tests (500 iterations), length baselines
 - **Dataset**: [meg-tong/sycophancy-eval](https://huggingface.co/datasets/meg-tong/sycophancy-eval) — 1,817 TriviaQA question pairs
@@ -178,11 +156,7 @@ Every confound-free stage (4-6) includes:
 
 ## References
 
-- Azaria, A. & Mitchell, T. (2023). *The Internal State of an LLM Knows When It's Lying*. EMNLP Findings. [arXiv:2304.13734](https://arxiv.org/abs/2304.13734)
+- Azaria, A. & Mitchell, T. (2023). *The Internal State of an LLM Knows When It's Lying*. EMNLP Findings.
 - Burns, C. et al. (2023). *Discovering Latent Knowledge in Language Models Without Supervision*. ICLR.
 - Belinkov, Y. (2022). *Probing Classifiers: Promises, Shortcomings, and Advances*. Computational Linguistics.
-- Zou, A. et al. (2023). *Representation Engineering: A Top-Down Approach to AI Transparency*. [arXiv:2310.01405](https://arxiv.org/abs/2310.01405)
-
-## License
-
-Research project — not yet licensed for production use.
+- Zou, A. et al. (2023). *Representation Engineering: A Top-Down Approach to AI Transparency*.

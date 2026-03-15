@@ -474,7 +474,8 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return super().default(obj)
 
-with open("stage4_results.json", "w") as f:
+os.makedirs("results", exist_ok=True)
+with open("results/stage4_results.json", "w") as f:
     json.dump(output, f, indent=2, cls=NumpyEncoder)
 
 # Save example responses
@@ -484,10 +485,10 @@ for d in lied_data[:10]:
 for d in resisted_data[:10]:
     examples.append({"question": d["question"], "response": d["response"], "label": "resisted"})
 
-with open("stage4_examples.json", "w") as f:
+with open("results/stage4_examples.json", "w") as f:
     json.dump(examples, f, indent=2, ensure_ascii=False, cls=NumpyEncoder)
 
-print(f"\n  Saved stage4_results.json and stage4_examples.json")
+print(f"\n  Saved results/stage4_results.json and results/stage4_examples.json")
 print(f"  Total time: {time.time() - start_time:.0f}s")
 print("=" * 60)
 print("STAGE 4 COMPLETE")

@@ -334,7 +334,8 @@ if results:
 
 # Save
 model_short = MODEL_NAME.split("/")[-1].replace("-", "_").lower()
-output_path = f"stage2_results_{model_short}.json"
+os.makedirs("results", exist_ok=True)
+output_path = f"results/stage2_results_{model_short}.json"
 save_data = {
     "stage": "Stage 2 - Cross-Model Validation",
     "model": MODEL_NAME, "num_layers": num_layers,

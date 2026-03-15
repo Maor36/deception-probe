@@ -453,7 +453,8 @@ save_data = {
 }
 
 # Save to current directory (works in both Colab and local)
-output_path = "stage1_results.json"
+os.makedirs("results", exist_ok=True)
+output_path = "results/stage1_results.json"
 
 # Convert numpy types to Python native types for JSON serialization
 def convert_numpy(obj):

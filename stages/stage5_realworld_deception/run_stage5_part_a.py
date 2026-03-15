@@ -204,7 +204,8 @@ for r in all_results:
         "response_length": r["response_length"],
     })
 
-with open("stage5_responses.json", "w") as f:
+os.makedirs("results", exist_ok=True)
+with open("results/stage5_responses.json", "w") as f:
     json.dump(responses_for_review, f, indent=2, ensure_ascii=False)
 
 # Save full data with hidden states (pickle — for Part B)
@@ -219,7 +220,7 @@ for r in all_results:
         "hidden_states": r["hidden_states"],
     })
 
-with open("stage5_hidden_states.pkl", "wb") as f:
+with open("results/stage5_hidden_states.pkl", "wb") as f:
     pickle.dump(hidden_states_data, f)
 
 # Print some examples
@@ -242,8 +243,8 @@ print(f"  Avg response length: {np.mean(lengths):.0f} chars")
 print(f"  Min/Max length: {min(lengths)}/{max(lengths)} chars")
 print(f"  Total time: {time.time() - start_time:.0f}s")
 print(f"\n  Saved:")
-print(f"    stage5_responses.json     — readable responses for review")
-print(f"    stage5_hidden_states.pkl  — hidden states for Part B probe training")
+print(f"    results/stage5_responses.json     — readable responses for review")
+print(f"    results/stage5_hidden_states.pkl  — hidden states for Part B probe training")
 print(f"\n  NEXT: Review responses, then run Part B for classification + probes")
 print(f"{'='*60}")
 print("PART A COMPLETE")

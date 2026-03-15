@@ -418,7 +418,8 @@ results = {
     },
 }
 
-with open("stage5_results_v2.json", "w") as f:
+os.makedirs("results", exist_ok=True)
+with open("results/stage5_results.json", "w") as f:
     json.dump(results, f, indent=2)
 
 # ============================================================
@@ -463,7 +464,7 @@ print(f"    Stage 4 (trivia, clean):     82.5% accuracy")
 print(f"    Stage 5 (real-world, clean): {best_bal_acc:.1%} balanced accuracy (layer {best_layer})")
 
 print(f"\n  Total time: {total_time:.0f}s ({total_time/60:.1f} min)")
-print(f"  Saved: stage5_results_v2.json")
+print(f"  Saved: results/stage5_results.json")
 print(f"{'='*60}")
 print("STAGE 5 COMPLETE")
 print(f"{'='*60}")
