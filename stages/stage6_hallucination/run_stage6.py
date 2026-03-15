@@ -339,7 +339,7 @@ if min_3way >= 5:
         n_splits = min(5, min_3way)
         cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_SEED)
         clf = LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, 
-                                  C=1.0, multi_class="multinomial")
+                                  C=1.0)
         scores = cross_val_score(clf, X_scaled, y, cv=cv, scoring=bal_acc_scorer)
 
         tag = " (EMBEDDING)" if layer_idx == 0 else ""
@@ -374,7 +374,7 @@ if min_3way >= 5:
     # Try multiple classifiers on 3-way
     classifiers = {
         "LogReg": LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, 
-                                      C=1.0, multi_class="multinomial"),
+                                      C=1.0),
         "SVM-RBF": SVC(kernel="rbf", random_state=RANDOM_SEED, class_weight="balanced"),
         "GradientBoosting": GradientBoostingClassifier(n_estimators=100, max_depth=3, 
                                                          random_state=RANDOM_SEED),
@@ -405,7 +405,7 @@ if min_3way >= 5:
 
     # Confusion matrix (train on all, for visualization)
     clf_full = LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, 
-                                   C=1.0, multi_class="multinomial")
+                                   C=1.0)
     clf_full.fit(X_3way_s, y_3way)
     y_pred = clf_full.predict(X_3way_s)
     cm = confusion_matrix(y_3way, y_pred)
@@ -513,7 +513,7 @@ if min_3way >= 5:
         y_test = y_3way[test_idx]
         
         clf_lc = LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, 
-                                     C=1.0, multi_class="multinomial")
+                                     C=1.0)
         clf_lc.fit(X_train, y_train)
         
         train_acc = balanced_accuracy_score(y_train, clf_lc.predict(X_train))

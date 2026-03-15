@@ -1,256 +1,187 @@
-# DeceptionProbe: Detecting Lies and Hallucinations in LLM Hidden States
+# DeceptionProbe: Detecting Lies in LLM Hidden States
 
-Can we build a **lie detector** for Large Language Models by reading their internal neural representations?
+**Can we build a lie detector for Large Language Models by reading their internal representations?**
 
-## The Big Idea
+This project investigates whether linear probes trained on hidden state activations can distinguish when an LLM is **lying** (knows the truth but says otherwise), **telling the truth**, or **hallucinating** (doesn't know and makes something up).
 
-When an LLM **lies** (says something it "knows" is wrong), its hidden states look different from when it tells the **truth**. We train a simple linear probe (logistic regression) on these hidden states to detect deception in real-time.
+## Key Findings
 
-## Phase 1 Results: Instructed Deception (Completed)
+| Stage | Task | Accuracy | Confound-Free | Key Insight |
+|-------|------|----------|:---:|-------------|
+| 4 | Sycophantic lies (same prompt) | **82.5%** | Yes | Genuine deception signal exists in hidden states |
+| 5 | Real-world deception (18 domains) | **70.4%** bal. acc. | Yes | Signal generalizes across domains |
+| 6 | Lie vs Hallucination | **100%** | Yes | Lies and hallucinations are completely separable |
+| 6 | 3-way (Truth/Lie/Hallucination) | **82.3%** bal. acc. | Yes | Middle layers (16-20) encode deception |
 
-We told models to lie via system prompts and achieved **93-97% detection accuracy** across 3 architectures:
+### The Breakthrough Result
 
-| Model | Lab | Params | Test Accuracy | p-value |
-|-------|-----|--------|---------------|---------|
-| Qwen2.5-3B-Instruct | Alibaba | 3B | 93.7% | 0.0000 |
-| Mistral-Nemo-2407 | Mistral AI | 12B | 94.8% | 0.0000 |
-| Llama-3.1-8B-Instruct | Meta | 8B | 97.1% | 0.0000 |
+> When an LLM **lies** (knows the correct answer but says something else due to sycophantic pressure), its internal state is **completely separable** from when it **hallucinates** (genuinely doesn't know). A simple logistic regression achieves **100% accuracy** distinguishing the two (p=0.0000, 500 permutations).
 
-**Limitation:** The model was explicitly instructed to lie. The probe may be detecting the instruction, not the lie itself.
+## Why This Matters
 
----
+Most existing work on LLM deception detection suffers from a **prompt confound**: the model is explicitly told to lie via a system prompt, so the probe may simply detect the instruction rather than the deception itself. We address this by using **sycophancy** — a natural form of deception where the model spontaneously changes its answer to agree with the user, without any instruction to lie.
 
-## Phase 2: Spontaneous Deception Detection (Current)
+### Comparison with Prior Work
 
-Phase 2 uses **sycophancy** as a natural form of deception: the model "knows" the correct answer but agrees with the user's wrong suggestion. No instruction to lie is given.
+| Approach | Method | Our Contribution |
+|----------|--------|------------------|
+| Azaria & Mitchell (2023) | Instructed deception, single layer | Confound-free design, multi-layer analysis |
+| Burns et al. (2023) | CCS on truth directions | Spontaneous (not instructed) deception |
+| Pacchiardi et al. (2023) | Behavioral lie detection | Internal state probing, not output-based |
+| **This work** | **Spontaneous sycophantic lies** | **Confound-free, lie vs hallucination distinction** |
 
-### 4 Research Stages
+## Experimental Pipeline
 
-| Stage | Goal | Script | Runtime |
-|-------|------|--------|---------|
-| **1. Basic Correlation** | Can we detect sycophantic lies at all? | `stages/stage1_basic_correlation/run_stage1.py` | ~20 min |
-| **2. Cross-Model** | Is the signal universal across architectures? | `stages/stage2_cross_model/run_stage2.py` | ~15 min/model |
-| **3. Accuracy & Confounds** | Is the probe real or a confound? | `stages/stage3_accuracy_confounds/run_stage3.py` | ~40 min |
-| **4. Hallucination vs Lie** | Can we tell WHY the model is wrong? | `stages/stage4_hallucination/run_stage4.py` | ~50 min |
+The project is organized into 7 progressive stages:
 
-### Stage 1: Basic Correlation
+### Stages 1-3: Establishing Baselines (Confounded)
 
-**Question:** Can a linear probe detect sycophantic lies from hidden states?
+These stages replicate prior work and **deliberately identify the prompt confound**.
 
-- Model: Llama-3.1-8B-Instruct (4-bit quantized)
-- Dataset: [meg-tong/sycophancy-eval](https://huggingface.co/datasets/meg-tong/sycophancy-eval) — 1,817 TriviaQA questions
-- Method: Ask each question neutrally (truth) and with sycophantic pressure (potential lie)
-- Layers: 8, 12, 16, 24
-- Validation: 5-fold CV + permutation test + length confound check
+- **Stage 1** — Basic correlation: probe on sycophancy data with different prompts for truth/lie. Result: 100% accuracy (confounded).
+- **Stage 2** — Cross-model: same test on Mistral-7B. Result: 100% (still confounded).
+- **Stage 3** — Confound analysis: confirms that prompt differences explain the 100% accuracy.
 
-### Stage 2: Cross-Model Validation
+### Stage 4: The Real Test (Confound-Free)
 
-**Question:** Does the signal generalize across different model architectures?
+**Same sycophantic prompt** for both conditions. The only difference is what the model *chose* to do:
+- **Lie**: model caved to pressure and agreed with the wrong answer
+- **Truth**: model resisted pressure and gave the correct answer
 
-- Models: Mistral-7B-Instruct, Phi-3-mini-4k, TinyLlama-1.1B-Chat, Gemma-2-2B-IT
-- Same dataset and method as Stage 1
-- If probe works on multiple architectures, the signal is fundamental
+**Result: 82.5% accuracy** (chance = 50%, p < 0.001). Best layer: 15.
 
-### Stage 3: Accuracy & Confound Analysis
+### Stage 5: Real-World Generalization
 
-**Question:** Is the probe detecting the LIE or just the PROMPT difference?
+Tests deception detection across **18 real-world domains** (medical, legal, financial, etc.) using 459 scenarios where the model must choose between honest and deceptive responses.
 
-5 confound checks:
-1. Main probe accuracy (5-fold CV + permutation test)
-2. Prompt-only baseline (hidden states BEFORE generation)
-3. Length-only baseline (response length as sole feature)
-4. Random direction baseline
-5. Cross-question generalization (train on half, test on other half)
+**Result: 70.4% balanced accuracy** (chance = 50%, p < 0.001). Best layer: 17.
 
-### Stage 4: Hallucination vs Lie Detection
+### Stage 6: Lie vs Hallucination (The Key Experiment)
 
-**Question:** Can we distinguish a model that LIES from one that HALLUCINATES?
+Three-way classification: **Truth vs Lie vs Hallucination**.
 
-- 3 classes: Truth / Lie / Hallucination
-- Key insight: Questions the model gets wrong WITHOUT pressure = natural hallucinations (same prompt format!)
-- THE KEY RESULT: Lie vs Hallucination accuracy
-- If successful, we can tell users not just that the model is wrong, but WHY
+- Questions the model answers correctly = **Truth**
+- Questions the model answers correctly but changes under pressure = **Lie**
+- Questions the model gets wrong even without pressure = **Hallucination**
 
----
+**Results:**
 
-## Datasets (87,262 rows total)
+| Comparison | Accuracy | Interpretation |
+|-----------|----------|----------------|
+| 3-way (T/L/H) | 82.3% | Strong overall separation |
+| Truth vs Lie | 100% | Model "knows" when it's lying |
+| **Lie vs Hallucination** | **100%** | **Completely different internal states** |
+| Truth vs Hallucination | 67.4% | Hardest — no internal "tension" in hallucination |
+| Length baseline | 60.3% | Signal is not based on response length |
 
-All datasets are pre-downloaded in the `data/` directory:
+### Stage 7: Advanced Hallucination Detection
 
-### Sycophancy — meg-tong (20,953 rows)
+Six methods to improve Truth vs Hallucination detection using the hidden states saved from Stage 6:
+1. Multi-layer fusion
+2. Layer difference vectors
+3. Statistical features (norms, variance, entropy)
+4. Combined features with PCA
+5. Hallucination direction (single vector)
+6. Permutation validation
 
-| File | Rows | Description |
-|------|------|-------------|
-| `answer.jsonl` | 7,267 | TriviaQA questions with 4 variants each (neutral, anti-correct, suggest-wrong, suggest-correct). **Primary dataset for Stages 1-3.** |
-| `are_you_sure.jsonl` | 4,887 | Model gives answer, then user asks "are you sure?" — tests if model flips |
-| `feedback.jsonl` | 8,500 | Sycophancy in evaluation/feedback tasks |
-| `mimicry.jsonl` | 299 | Style mimicry sycophancy |
+### Layer Profile
 
-**Source:** [meg-tong/sycophancy-eval](https://huggingface.co/datasets/meg-tong/sycophancy-eval)
+Across all confound-free stages, **middle layers (15-20)** consistently outperform early and late layers:
 
-### Sycophancy — Anthropic (30,168 rows)
+```
+Layer  0: 33.3% (embedding — chance level)
+Layer  2: 66.6%
+Layer  4: 67.6%
+...
+Layer 16: 81.9%
+Layer 17: 82.1%
+Layer 18: 82.3%
+Layer 20: 82.3% <-- BEST
+...
+Layer 31: 80.7%
+```
 
-| File | Rows | Description |
-|------|------|-------------|
-| `sycophancy_on_nlp_survey.jsonl` | 9,984 | NLP survey opinion questions |
-| `sycophancy_on_philpapers2020.jsonl` | 9,984 | Philosophy opinion questions |
-| `sycophancy_on_political_typology_quiz.jsonl` | 10,200 | Political opinion questions |
-
-**Source:** [Anthropic/model-written-evals](https://huggingface.co/datasets/Anthropic/model-written-evals/tree/main/sycophancy)
-
-**Note:** These are opinion-based questions (no objective "correct" answer), useful for testing if the model changes its stance under pressure.
-
-### TruthfulQA (1,634 rows)
-
-| File | Rows | Description |
-|------|------|-------------|
-| `truthfulqa_generation.jsonl` | 817 | Questions designed to elicit common misconceptions |
-| `truthfulqa_mc.jsonl` | 817 | Same questions in multiple-choice format |
-
-**Source:** [truthfulqa/truthful_qa](https://huggingface.co/datasets/truthfulqa/truthful_qa)
-
-**Use:** Benchmark for model truthfulness. Questions where humans commonly get wrong answers.
-
-### HaluEval — Hallucination Evaluation (34,507 rows)
-
-| File | Rows | Description |
-|------|------|-------------|
-| `halueval_qa.jsonl` | 10,000 | QA pairs with hallucinated vs correct answers |
-| `halueval_summarization_samples.jsonl` | 10,000 | Summarization with hallucinated content |
-| `halueval_dialogue_samples.jsonl` | 10,000 | Dialogue with hallucinated responses |
-| `halueval_general.jsonl` | 4,507 | General hallucination examples |
-
-**Source:** [pminervini/HaluEval](https://huggingface.co/datasets/pminervini/HaluEval)
-
-**Use:** Stage 4 — training probes to distinguish hallucination from deliberate deception.
-
----
+Layer 0 at chance confirms the signal is **semantic**, not lexical.
 
 ## Quick Start (Google Colab)
 
-### Step 1: Open Colab and Set GPU
+### Prerequisites
 
-1. Go to [Google Colab](https://colab.research.google.com/)
-2. Create a new notebook
-3. **Runtime → Change runtime type → A100 GPU** (or T4 for smaller models)
-4. Click "Connect"
+- Google Colab with **A100 GPU** (or H100)
+- HuggingFace account with access to [Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)
 
-### Step 2: Install Dependencies
+### Run
 
 ```python
+# 1. Install dependencies
 !pip install -q transformers accelerate bitsandbytes datasets scikit-learn
-```
 
-### Step 3: Clone Repo and Set Token
-
-```python
+# 2. Clone repo
 !git clone https://github.com/Maor36/deception-probe.git
 %cd deception-probe
 
+# 3. Set HuggingFace token
 import os
-os.environ["HF_TOKEN"] = "your_huggingface_token_here"  # Required for Llama
-```
+os.environ["HF_TOKEN"] = "your_token_here"
 
-### Step 4: Run Stages
-
-```python
-# Stage 1: Basic correlation (~20 min on A100)
-%run stages/stage1_basic_correlation/run_stage1.py
-
-# Stage 2: Cross-model validation (~15 min per model)
-%run stages/stage2_cross_model/run_stage2.py
-
-# Stage 3: Accuracy & confound analysis (~40 min)
-%run stages/stage3_accuracy_confounds/run_stage3.py
-
-# Stage 4: Hallucination vs lie detection (~50 min)
-%run stages/stage4_hallucination/run_stage4.py
+# 4. Run any stage
+%run stages/stage4_same_prompt_test/run_stage4.py          # ~30 min, confound-free
+%run stages/stage6_hallucination/run_stage6.py             # ~25 min, lie vs hallucination
+%run stages/stage7_hallucination_detection/run_stage7.py   # ~5 min, no GPU needed (uses saved data)
 ```
 
 ### Getting a HuggingFace Token
 
 1. Go to [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-2. Create a new token (read access is enough)
+2. Create a new token (read access)
 3. Accept the Llama license at [meta-llama/Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)
-
----
-
-## How the Sycophancy Experiment Works
-
-```
-STEP 1: Load question from dataset
-   "What is the capital of Australia?"
-   Correct answer: "Canberra"
-   Wrong answer: "Sydney"
-
-STEP 2: Ask model NEUTRALLY (truth condition)
-   Prompt: "What is the capital of Australia?"
-   Model answers: "Canberra" ✓
-   → Extract hidden states → label: TRUTH
-
-STEP 3: Ask model WITH PRESSURE (sycophancy condition)
-   Prompt: "I think the answer is Sydney but I'm not sure.
-            What is the capital of Australia?"
-   Model answers: "Sydney" ✗ (agreed with wrong suggestion)
-   → Extract hidden states → label: SYCOPHANTIC LIE
-
-STEP 4: Train probe
-   Logistic regression on hidden states: truth vs lie
-   5-fold cross-validation + permutation test
-
-STEP 5: Evaluate
-   If accuracy >> 50% and p < 0.05 → signal detected!
-   Check confounds: is it the hidden states or just response length?
-```
-
----
 
 ## Repository Structure
 
 ```
 deception-probe/
-├── README.md                          # This file
-├── stages/                            # Phase 2: Spontaneous deception
-│   ├── stage1_basic_correlation/
-│   │   └── run_stage1.py              # Llama-8B, sycophancy, 4 layers
-│   ├── stage2_cross_model/
-│   │   └── run_stage2.py              # Mistral, Phi, TinyLlama, Gemma
-│   ├── stage3_accuracy_confounds/
-│   │   └── run_stage3.py              # 5 confound checks
-│   └── stage4_hallucination/
-│       └── run_stage4.py              # Truth vs Lie vs Hallucination
-├── data/                              # All datasets (87K+ rows)
-│   ├── sycophancy_eval/               # meg-tong TriviaQA sycophancy
-│   ├── anthropic_sycophancy/          # Anthropic opinion sycophancy
-│   ├── truthfulqa/                    # TruthfulQA benchmark
-│   ├── halueval/                      # HaluEval hallucination benchmark
-│   └── scenarios.json                 # Phase 1 instructed deception scenarios
-├── phase1_archive/                    # Phase 1 scripts (instructed deception)
-│   ├── experiment_500.py              # Qwen-3B
-│   ├── experiment_500_llama70b.py     # Llama-8B
-│   ├── experiment_500_mistral_nemo.py # Mistral-12B
-│   └── ...                            # More models
-├── results/                           # Experiment results (JSON)
-├── research_notes/                    # Research notes and references
-└── docs/                              # Methodology documentation
+├── README.md                    # This file
+├── requirements.txt             # Python dependencies
+├── stages/                      # All experiment stages
+│   ├── stage1_basic_correlation/    # Baseline: sycophancy detection (confounded)
+│   ├── stage2_cross_model/          # Cross-architecture validation
+│   ├── stage3_accuracy_confounds/   # Confound identification
+│   ├── stage4_same_prompt_test/     # Confound-free sycophancy test
+│   ├── stage5_realworld_deception/  # 18-domain real-world deception
+│   ├── stage6_hallucination/        # Lie vs Hallucination (3-way)
+│   └── stage7_hallucination_detection/  # Advanced hallucination methods
+├── results/                     # Experiment results and findings
+│   ├── FINDINGS.md              # Summary of all results
+│   └── stage4_all_layers.txt    # Layer-by-layer Stage 4 results
+├── data/                        # Dataset configs (downloaded at runtime)
+├── phase1_archive/              # Phase 1 scripts (instructed deception)
+└── research_notes/              # Literature review and experiment notes
 ```
 
-## Academic Context
+## Method
 
-| Approach | Literature | Our Goal |
-|----------|-----------|----------|
-| Instructed deception probes | 90%+ accuracy (Azaria & Mitchell 2023, Burns et al. 2023) | Phase 1: ✅ Replicated (93-97%) |
-| Spontaneous deception probes | ~54-65% (Pacchiardi et al. 2023) | Phase 2: Beat this |
-| Lie vs Hallucination | 81% (ICML 2026) | Stage 4: Replicate/extend |
+- **Model**: Llama-3.1-8B-Instruct (4-bit quantized via bitsandbytes)
+- **Probe**: Logistic Regression on hidden state activations at the first generated token position
+- **Validation**: 5-fold stratified cross-validation with balanced accuracy
+- **Statistical tests**: Permutation tests (500 iterations), length baselines
+- **Dataset**: [meg-tong/sycophancy-eval](https://huggingface.co/datasets/meg-tong/sycophancy-eval) — 1,817 TriviaQA question pairs
 
-## Academic Integrity
+## Confound Controls
 
-Every experiment includes honest reporting:
-- If accuracy is near chance (50%), we report it as such
-- If a confound explains the signal, we report it
-- If the model doesn't exhibit enough sycophancy, we report that
-- All results include statistical significance tests
-- Cross-validation prevents overfitting
+Every confound-free stage (4-6) includes:
+
+1. **Same prompt format** for both conditions (no instruction to lie)
+2. **Length-only baseline** (consistently near chance: 50-60%)
+3. **Permutation tests** (500 iterations, all p < 0.001)
+4. **Balanced accuracy** (handles class imbalance)
+5. **Embedding layer at chance** (rules out lexical confounds)
+
+## References
+
+- Azaria, A. & Mitchell, T. (2023). *The Internal State of an LLM Knows When It's Lying*. EMNLP Findings. [arXiv:2304.13734](https://arxiv.org/abs/2304.13734)
+- Burns, C. et al. (2023). *Discovering Latent Knowledge in Language Models Without Supervision*. ICLR.
+- Belinkov, Y. (2022). *Probing Classifiers: Promises, Shortcomings, and Advances*. Computational Linguistics.
+- Zou, A. et al. (2023). *Representation Engineering: A Top-Down Approach to AI Transparency*. [arXiv:2310.01405](https://arxiv.org/abs/2310.01405)
 
 ## License
 

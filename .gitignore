@@ -13,10 +13,18 @@ data/halueval/*.jsonl
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 
-# Results (ignore in root, keep in results/ directory)
-*_results.json
-!results/**
+# Large binary files (hidden states)
+*.pkl
+
+# Stage 5 intermediate data (generated at runtime)
+stages/stage5_realworld_deception/stage5_responses.json
+stages/stage5_realworld_deception/stage5_classifications.json
 
 # Jupyter
 .ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
