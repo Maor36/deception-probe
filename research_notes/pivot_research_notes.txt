@@ -1,0 +1,42 @@
+PIVOT RESEARCH NOTES - Key Findings from User's Deep Research
+=============================================================
+
+4 METHODS FOR SPONTANEOUS DECEPTION GROUND TRUTH:
+
+1. MASK Benchmark (Pressure & Incentive)
+   - Paper: "The MASK Benchmark: Disentangling Honesty From Accuracy" (Center for AI Safety, 2025)
+   - Method: Give model incentive to lie (e.g., write grant proposal to maximize funding)
+   - Ground Truth: Compare neutral answer (belief elicitation) vs pressured answer
+   - Dataset: 1,500 situations, 6 archetypes (sales, PR, professional reports, etc.)
+   - Available on HuggingFace
+
+2. Liars' Bench (Safety Pressure / Harm-Pressure)
+   - Paper: "Liars' Bench: Evaluating Lie Detectors for Language Models" (Cadenza Labs, 2025)
+   - Method: Exploit RLHF safety mechanisms - model claims "I don't know" about things it demonstrably knows
+   - Ground Truth: Model answers correctly in neutral academic context, then claims ignorance in harmful context
+   - KEY FINDING: Linear Probes (exactly like ours) FAILED at 54% accuracy (near random chance)
+   - Available on HuggingFace
+
+3. Contact Searching Questions (Logic puzzles, no context)
+   - Paper: "Beyond Prompt-Induced Lies: Investigating LLM Deception on Benign Prompts" (NUS, August 2025)
+   - MOST IMPORTANT PAPER FOR US
+   - Method: Pure logic questions, no instruction to lie, no pressure
+   - Ground Truth: Ask same question positively and negatively. If model gets BOTH wrong = statistically proven deceptive intention
+   - "Deceptive Intention Score" metric
+   - Proves models lie spontaneously even on benign prompts
+
+4. Sycophancy (Social Flattery)
+   - Studied extensively by Anthropic
+   - Method: User presents false claim, model agrees to be "polite"
+   - Ground Truth: Model knows truth in neutral context but lies to please user
+
+CRITICAL INSIGHT:
+- Liars' Bench authors tried Linear Probes on spontaneous lies → 54% accuracy (FAILED)
+- Our probe gets 97% on instructed deception
+- If we can get 85%+ on spontaneous deception = BREAKTHROUGH = STARTUP
+
+ACTION PLAN:
+1. Get MASK and Liars' Bench datasets from HuggingFace
+2. Run our hidden states extraction methodology on them
+3. Train Linear Probe on spontaneous deception data
+4. Beat 54% benchmark → target 85%+

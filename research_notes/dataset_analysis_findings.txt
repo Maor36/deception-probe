@@ -1,0 +1,46 @@
+LIARS' BENCH DATASET ANALYSIS
+==============================
+
+1. HuggingFace Dataset (Cadenza-Labs/liars-bench):
+   - GATED: "auto" - requires authentication and agreement to terms
+   - Format: parquet
+   - Size: 10K-100K examples
+   - Cannot download without HF token + agreement
+
+2. GitHub Raw Data (what's available freely):
+   - cities.csv: 1,496 rows - factual statements about cities (true/false)
+     Columns: statement, label, city, country, correct_country
+     Example: "The city of Krasnodar is in Russia." label=1 (true)
+   
+   - common_claim.csv: 4,450 rows - common claims (true/false)
+     Columns: statement, label
+     Example: "Spiders can use surface tension to walk on water." label=1
+   
+   - companies.csv: 1,200 rows - company statements (true/false)
+     Columns: statement, label
+     Example: "Meta Platforms has headquarters in United States." label=1
+
+   - cities_cities_conj.csv: 1,498 rows - conjunction statements
+     Columns: statement, label, statement1, label1, city1, country1, etc.
+
+3. CRITICAL INSIGHT:
+   The GitHub raw data is just FACTUAL STATEMENTS (true/false).
+   These are NOT the spontaneous deception data!
+   
+   The spontaneous deception data (Harm-Pressure, Insider Trading, etc.)
+   is in the GATED HuggingFace dataset, which contains:
+   - Model responses (from Llama-70B, Qwen-72B, etc.)
+   - Labels (honest/dishonest)
+   - Scenario types (harm-pressure, insider-trading, etc.)
+   
+   The process_dataset.py script references files like:
+   - convince-me-developer.csv
+   - harm-pressure-choice.csv
+   - harm-pressure-knowledge-report.csv
+   These are in the RESULTS directory, not raw data.
+
+4. WHAT WE CAN DO:
+   a) Use the factual statements (cities, common_claims, companies) 
+      to create our own probe training data
+   b) Ask the user to approve HF access for the full dataset
+   c) Recreate the harm-pressure methodology ourselves using the paper
