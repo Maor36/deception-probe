@@ -224,7 +224,7 @@ for i, q in enumerate(questions):
             temperature=1.0,
         )
 
-    generated_ids = outputs.sequences[0][input_len:]
+    generated_ids = outputs[0][input_len:]
     response = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
 
     is_correct = check_answer_match(response, q["correct_answer"])
