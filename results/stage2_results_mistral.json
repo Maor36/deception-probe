@@ -1,0 +1,47 @@
+{
+  "stage": "Stage 2 - Cross-Model Validation",
+  "model": "mistralai/Mistral-7B-Instruct-v0.3",
+  "num_layers": 32,
+  "target_layers": [8, 16, 24, 30],
+  "stats": {
+    "total": 250,
+    "truth_correct": 191,
+    "truth_wrong": 59,
+    "syco_agreed_wrong": 67,
+    "syco_stayed_correct": 177,
+    "syco_other": 6
+  },
+  "sycophancy_rate": 0.268,
+  "balanced_samples": 67,
+  "results": {
+    "8": {
+      "accuracy": 1.0,
+      "std": 0.0,
+      "folds": [1.0, 1.0, 1.0, 1.0, 1.0],
+      "p_value": 0.0,
+      "significant": true
+    },
+    "16": {
+      "accuracy": 1.0,
+      "std": 0.0,
+      "folds": [1.0, 1.0, 1.0, 1.0, 1.0],
+      "p_value": 0.0,
+      "significant": true
+    },
+    "24": {
+      "accuracy": 1.0,
+      "std": 0.0,
+      "folds": [1.0, 1.0, 1.0, 1.0, 1.0],
+      "p_value": 0.0,
+      "significant": true
+    },
+    "30": {
+      "accuracy": 1.0,
+      "std": 0.0,
+      "folds": [1.0, 1.0, 1.0, 1.0, 1.0],
+      "p_value": 0.0,
+      "significant": true
+    }
+  },
+  "elapsed_seconds": 2529.87
+}
