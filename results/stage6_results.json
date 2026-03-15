@@ -1,0 +1,62 @@
+{
+  "stage": "Stage 6 - Hallucination vs Lie Detection",
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "questions_tested": 500,
+  "model_knows": 355,
+  "model_doesnt_know": 145,
+  "truth_samples": 355,
+  "lie_samples": 43,
+  "hallucination_samples": 145,
+  "balanced_3way": 43,
+  "best_layer": 20,
+  "layer_results": {
+    "0": { "bal_acc": 0.333, "std": 0.0 },
+    "2": { "bal_acc": 0.666, "std": 0.068 },
+    "4": { "bal_acc": 0.676, "std": 0.060 },
+    "6": { "bal_acc": 0.691, "std": 0.042 },
+    "8": { "bal_acc": 0.669, "std": 0.063 },
+    "10": { "bal_acc": 0.739, "std": 0.056 },
+    "12": { "bal_acc": 0.714, "std": 0.050 },
+    "14": { "bal_acc": 0.767, "std": 0.062 },
+    "15": { "bal_acc": 0.782, "std": 0.098 },
+    "16": { "bal_acc": 0.819, "std": 0.058 },
+    "17": { "bal_acc": 0.821, "std": 0.073 },
+    "18": { "bal_acc": 0.823, "std": 0.056 },
+    "20": { "bal_acc": 0.823, "std": 0.067 },
+    "22": { "bal_acc": 0.792, "std": 0.056 },
+    "24": { "bal_acc": 0.791, "std": 0.047 },
+    "26": { "bal_acc": 0.791, "std": 0.050 },
+    "28": { "bal_acc": 0.807, "std": 0.022 },
+    "30": { "bal_acc": 0.801, "std": 0.038 },
+    "31": { "bal_acc": 0.807, "std": 0.022 }
+  },
+  "results": {
+    "3way_best": {
+      "layer": 20,
+      "classifier": "LogReg",
+      "bal_acc": 0.823,
+      "chance": 0.333
+    },
+    "truth_vs_lie": {
+      "bal_acc": 1.0,
+      "std": 0.0
+    },
+    "truth_vs_hallucination": {
+      "bal_acc": 0.674,
+      "std": 0.128
+    },
+    "lie_vs_hallucination": {
+      "bal_acc": 1.0,
+      "std": 0.0
+    },
+    "lie_vs_hall_length_baseline": {
+      "bal_acc": 0.603
+    },
+    "lie_vs_hall_permutation": {
+      "p_value": 0.0,
+      "null_mean": 0.502,
+      "null_std": 0.064
+    }
+  },
+  "elapsed_seconds": 1391
+}

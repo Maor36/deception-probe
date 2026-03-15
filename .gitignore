@@ -7,10 +7,6 @@ __pycache__/
 # Large binary files (hidden states, generated at runtime)
 *.pkl
 
-# Runtime results (generated when you run stages)
-results/*.json
-results/*_examples.json
-
 # Jupyter
 .ipynb_checkpoints/
 
