@@ -1,0 +1,21 @@
+# Large data files - downloaded at runtime from HuggingFace
+data/sycophancy_eval/*.jsonl
+data/anthropic_sycophancy/*.jsonl
+data/truthfulqa/*.jsonl
+data/halueval/*.jsonl
+
+# Keep data directory structure
+!data/
+!data/*/
+!data/*/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Results (generated at runtime)
+*_results.json
+
+# Jupyter
+.ipynb_checkpoints/
