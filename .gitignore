@@ -14,8 +14,9 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Results (generated at runtime)
+# Results (ignore in root, keep in results/ directory)
 *_results.json
+!results/**
 
 # Jupyter
 .ipynb_checkpoints/
