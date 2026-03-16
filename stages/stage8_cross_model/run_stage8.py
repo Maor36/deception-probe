@@ -8,26 +8,31 @@ Goal: Does the deception signal generalize across different model
       (Train and test on the same model, but different models)
 
   Q2: Does a probe trained on Model A transfer to Model B?
-      (Train on Llama, test on Mistral — same regression?)
+      (Train on Llama, test on Mistral - same regression?)
 
 Models tested:
   - meta-llama/Llama-3.1-8B-Instruct  (baseline, already tested)
   - mistralai/Mistral-7B-Instruct-v0.3
   - Qwen/Qwen2.5-7B-Instruct
 
+CHECKPOINT/RESUME:
+  This script saves results after EACH model completes.
+  If it crashes mid-run, just re-run it - it will skip models
+  that already have saved results and continue from where it stopped.
+
 Method:
   For each model:
   1. Run the same sycophancy experiment (same questions, same prompts)
   2. Extract hidden states from middle layers
-  3. Train within-model probe → does this model have a deception signal?
-  4. Test cross-model transfer → does Llama's probe work on Mistral?
+  3. Train within-model probe -> does this model have a deception signal?
+  4. Test cross-model transfer -> does Llama's probe work on Mistral?
 
 If the signal transfers: universal deception representation (huge finding)
 If it doesn't: model-specific, but still useful per-model
 
 Dataset: meg-tong/sycophancy-eval (answer.jsonl)
 
-Usage (Colab with GPU - run one model at a time):
+Usage (Colab with GPU):
     !pip install -q transformers accelerate bitsandbytes datasets scikit-learn
     %cd /content/deception-probe
     %run stages/stage8_cross_model/run_stage8.py
@@ -43,6 +48,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import balanced_accuracy_score, make_scorer
+from sklearn.decomposition import PCA
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
@@ -54,6 +60,8 @@ RANDOM_SEED = 42
 MAX_QUESTIONS = 500
 MAX_NEW_TOKENS = 80
 N_PERMUTATIONS = 200
+
+CHECKPOINT_DIR = "results/stage8_checkpoints"
 
 MODELS = [
     {
@@ -85,9 +93,37 @@ print(f"Models: {len(MODELS)}")
 for m in MODELS:
     print(f"  - {m['name']}")
 print(f"Questions: {MAX_QUESTIONS}")
+print(f"Checkpoint dir: {CHECKPOINT_DIR}")
 print("=" * 60)
 
 start_time = time.time()
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+os.makedirs("results", exist_ok=True)
+
+
+# ============================================================
+# Checkpoint helpers
+# ============================================================
+def checkpoint_path(short_name):
+    return os.path.join(CHECKPOINT_DIR, f"{short_name}.pkl")
+
+
+def has_checkpoint(short_name):
+    return os.path.exists(checkpoint_path(short_name))
+
+
+def save_checkpoint(short_name, data):
+    with open(checkpoint_path(short_name), "wb") as f:
+        pickle.dump(data, f)
+    print(f"  >> Checkpoint saved for {short_name}")
+
+
+def load_checkpoint(short_name):
+    with open(checkpoint_path(short_name), "rb") as f:
+        data = pickle.load(f)
+    print(f"  >> Loaded checkpoint for {short_name}")
+    return data
+
 
 # ============================================================
 # STEP 1: Load Dataset (same for all models)
@@ -192,7 +228,6 @@ def generate_and_extract(model, tokenizer, prompt, layers):
 def run_sycophancy_experiment(model, tokenizer, model_config, questions):
     """Run the full sycophancy experiment for one model."""
     probe_layers = model_config["probe_layers"]
-    model_name = model_config["short"]
 
     print(f"\n  Phase A: Testing model knowledge (neutral prompts)...")
     model_knows = []
@@ -247,74 +282,26 @@ def run_sycophancy_experiment(model, tokenizer, model_config, questions):
     return truth_data, lie_data
 
 
-# ============================================================
-# STEP 2-3: Run experiment for each model
-# ============================================================
-all_model_data = {}
-all_model_results = {}
-
-bnb_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_compute_dtype=torch.float16,
-    bnb_4bit_quant_type="nf4",
-)
-
-bal_acc_scorer = make_scorer(balanced_accuracy_score)
-
-for model_idx, model_config in enumerate(MODELS):
-    model_name = model_config["name"]
-    short_name = model_config["short"]
-
-    print(f"\n{'='*60}")
-    print(f"[2/5] MODEL {model_idx+1}/{len(MODELS)}: {model_name}")
-    print(f"{'='*60}")
-
-    # Clear GPU memory from previous model
-    if model_idx > 0:
-        import gc
-        del model_obj
-        del tokenizer_obj
-        torch.cuda.empty_cache()
-        gc.collect()
-        time.sleep(5)
-
-    print(f"  Loading model...")
-    tokenizer_obj = AutoTokenizer.from_pretrained(model_name, token=HF_TOKEN)
-    model_obj = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        quantization_config=bnb_config,
-        device_map="auto",
-        output_hidden_states=True,
-        token=HF_TOKEN,
-    )
-    if tokenizer_obj.pad_token is None:
-        tokenizer_obj.pad_token = tokenizer_obj.eos_token
-
-    truth_data, lie_data = run_sycophancy_experiment(
-        model_obj, tokenizer_obj, model_config, questions
-    )
-
-    all_model_data[short_name] = {
-        "truth": truth_data,
-        "lie": lie_data,
-        "config": model_config,
-    }
-
-    # Within-model probe
-    print(f"\n  [3/5] Within-model probe for {short_name}...")
+def run_within_model_probe(truth_data, lie_data, probe_layers, short_name):
+    """Train within-model probe and return results."""
+    bal_acc_scorer = make_scorer(balanced_accuracy_score)
     min_n = min(len(truth_data), len(lie_data))
+
     if min_n < 10:
         print(f"    NOT ENOUGH DATA: {min_n} per class")
-        all_model_results[short_name] = {"within_model": "insufficient_data", "n_lies": len(lie_data)}
-        continue
+        return {"within_model": "insufficient_data", "n_lies": len(lie_data)}
 
     best_layer = None
     best_score = 0
     layer_results = {}
 
-    for layer_idx in model_config["probe_layers"]:
-        X_t = np.array([d["layer_hs"][layer_idx] for d in truth_data[:min_n]])
-        X_l = np.array([d["layer_hs"][layer_idx] for d in lie_data[:min_n]])
+    for layer_idx in probe_layers:
+        try:
+            X_t = np.array([d["layer_hs"][layer_idx] for d in truth_data[:min_n]])
+            X_l = np.array([d["layer_hs"][layer_idx] for d in lie_data[:min_n]])
+        except (KeyError, IndexError):
+            continue
+
         X = np.vstack([X_t, X_l])
         y = np.array([0] * min_n + [1] * min_n)
         X_s = StandardScaler().fit_transform(X)
@@ -351,9 +338,9 @@ for model_idx, model_config in enumerate(MODELS):
     p_value = np.mean([s >= best_score for s in null_scores])
     print(f"    Permutation p-value: {p_value:.4f}")
 
-    all_model_results[short_name] = {
+    return {
         "within_model": {
-            "best_layer": best_layer,
+            "best_layer": int(best_layer),
             "best_bal_acc": float(best_score),
             "layer_results": layer_results,
             "p_value": float(p_value),
@@ -363,6 +350,98 @@ for model_idx, model_config in enumerate(MODELS):
         }
     }
 
+
+# ============================================================
+# STEP 2-3: Run experiment for each model (with checkpoints)
+# ============================================================
+all_model_data = {}
+all_model_results = {}
+
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.float16,
+    bnb_4bit_quant_type="nf4",
+)
+
+for model_idx, model_config in enumerate(MODELS):
+    model_name = model_config["name"]
+    short_name = model_config["short"]
+
+    print(f"\n{'='*60}")
+    print(f"[2/5] MODEL {model_idx+1}/{len(MODELS)}: {model_name}")
+    print(f"{'='*60}")
+
+    # Check for checkpoint
+    if has_checkpoint(short_name):
+        checkpoint = load_checkpoint(short_name)
+        all_model_data[short_name] = checkpoint["model_data"]
+        all_model_results[short_name] = checkpoint["model_results"]
+        print(f"  SKIPPING (already completed)")
+        r = checkpoint["model_results"]
+        if isinstance(r.get("within_model"), dict):
+            wm = r["within_model"]
+            print(f"  Previous result: {wm['best_bal_acc']*100:.1f}% (layer {wm['best_layer']}, "
+                  f"{wm['n_lie']} lies)")
+        continue
+
+    # Clear GPU memory from previous model
+    if model_idx > 0:
+        import gc
+        try:
+            del model_obj
+            del tokenizer_obj
+        except NameError:
+            pass
+        torch.cuda.empty_cache()
+        gc.collect()
+        time.sleep(5)
+
+    print(f"  Loading model...")
+    try:
+        tokenizer_obj = AutoTokenizer.from_pretrained(model_name, token=HF_TOKEN)
+        model_obj = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            quantization_config=bnb_config,
+            device_map="auto",
+            output_hidden_states=True,
+            token=HF_TOKEN,
+        )
+    except Exception as e:
+        print(f"  ERROR loading model: {e}")
+        print(f"  Skipping {short_name}...")
+        all_model_results[short_name] = {"within_model": "load_error", "error": str(e)}
+        continue
+
+    if tokenizer_obj.pad_token is None:
+        tokenizer_obj.pad_token = tokenizer_obj.eos_token
+
+    print(f"  Loaded on {torch.cuda.get_device_name(0)}")
+
+    # Run experiment
+    truth_data, lie_data = run_sycophancy_experiment(
+        model_obj, tokenizer_obj, model_config, questions
+    )
+
+    all_model_data[short_name] = {
+        "truth": truth_data,
+        "lie": lie_data,
+        "config": model_config,
+    }
+
+    # Within-model probe
+    print(f"\n  [3/5] Within-model probe for {short_name}...")
+    model_result = run_within_model_probe(
+        truth_data, lie_data, model_config["probe_layers"], short_name
+    )
+    all_model_results[short_name] = model_result
+
+    # Save checkpoint immediately
+    save_checkpoint(short_name, {
+        "model_data": all_model_data[short_name],
+        "model_results": model_result,
+    })
+
+
 # ============================================================
 # STEP 4: Cross-model transfer
 # ============================================================
@@ -370,8 +449,6 @@ print(f"\n{'='*60}")
 print(f"[4/5] Cross-Model Transfer Tests")
 print(f"{'='*60}")
 
-# For transfer, we need to project to same dimensionality
-# Use PCA to project all models to common space
 transfer_results = {}
 
 model_names_with_data = [
@@ -379,8 +456,10 @@ model_names_with_data = [
     if isinstance(all_model_results.get(name, {}).get("within_model"), dict)
 ]
 
+print(f"  Models with data: {model_names_with_data}")
+
 if len(model_names_with_data) >= 2:
-    from sklearn.decomposition import PCA
+    common_dim = 256
 
     for source_name in model_names_with_data:
         for target_name in model_names_with_data:
@@ -407,7 +486,6 @@ if len(model_names_with_data) >= 2:
             y_target = np.array([0] * t_min + [1] * t_min)
 
             # Project both to same dimensionality using PCA
-            common_dim = 256
             pca_source = PCA(n_components=common_dim, random_state=RANDOM_SEED)
             pca_target = PCA(n_components=common_dim, random_state=RANDOM_SEED)
 
@@ -495,7 +573,7 @@ for name in MODELS:
         wm = r["within_model"]
         print(f"  {short:<20s} {wm['best_layer']:>10d} {wm['best_bal_acc']*100:>9.1f}% {wm['p_value']:>10.4f} {wm['n_lie']:>6d}")
     else:
-        print(f"  {short:<20s} {'N/A':>10s} {'N/A':>10s} {'N/A':>10s} {r.get('n_lies', 0):>6d}")
+        print(f"  {short:<20s} {'N/A':>10s} {'N/A':>10s} {'N/A':>10s}")
 
 if transfer_results:
     print(f"\n  CROSS-MODEL TRANSFER:")
@@ -532,8 +610,6 @@ if transfer_results:
             print(f"    Each model encodes deception differently.")
 
 # Save results
-os.makedirs("results", exist_ok=True)
-
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (np.integer,)):
@@ -545,6 +621,7 @@ class NumpyEncoder(json.JSONEncoder):
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
         return super().default(obj)
+
 
 output = {
     "stage": "Stage 8 - Cross-Model Generalization",
