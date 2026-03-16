@@ -459,7 +459,12 @@ model_names_with_data = [
 print(f"  Models with data: {model_names_with_data}")
 
 if len(model_names_with_data) >= 2:
-    common_dim = 256
+    # Determine max possible PCA dim based on smallest dataset
+    min_samples = min(
+        min(len(all_model_data[n]["truth"]), len(all_model_data[n]["lie"])) * 2
+        for n in model_names_with_data
+    )
+    common_dim = min(256, min_samples - 1)
 
     for source_name in model_names_with_data:
         for target_name in model_names_with_data:
