@@ -8,14 +8,21 @@ This project investigates whether linear probes trained on hidden state activati
 
 | Stage | Task | Accuracy | Confound-Free | Key Insight |
 |-------|------|----------|:---:|-------------|
-| 4 | Sycophantic lies (same prompt) | **82.5%** | Yes | Genuine deception signal exists in hidden states |
-| 5 | Real-world deception (18 domains) | **70.4%** bal. acc. | Yes | Signal generalizes across domains |
-| 6 | Lie vs Hallucination | **100%** | Yes | Lies and hallucinations are completely separable |
-| 6 | 3-way (Truth/Lie/Hallucination) | **82.3%** bal. acc. | Yes | Middle layers (16-20) encode deception |
+| 1-3 | Baseline (different prompts) | 100% | No | Prompt confound explains 100% |
+| **4** | **Sycophantic lies (same prompt)** | **82.5%** | **Yes** | Genuine deception signal in hidden states |
+| **5** | **Real-world deception (18 domains)** | **70.4%** bal. acc. | **Yes** | Signal generalizes across domains |
+| **6** | **Lie vs Hallucination** | **100%** | **Yes** | Lies and hallucinations are completely separable |
+| **6** | **3-way (Truth/Lie/Hallucination)** | **82.3%** bal. acc. | **Yes** | Middle layers (16-20) encode deception |
+| 7 | Advanced hallucination detection | 77.9% | Yes | Multi-layer fusion improves T vs H |
+| **8** | **Cross-model generalization** | **100%** within | **Yes** | Universal signal across 3 model families |
+| **8** | **Qwen inverted polarity** | **97-98%** flipped | **Yes** | Same signal, opposite direction |
+| 9 | Types of deception | Pending | Yes | Sycophancy, instruction conflict, authority |
 
-### The Breakthrough Result
+### The Breakthrough Results
 
-> When an LLM **lies** (knows the correct answer but says something else due to sycophantic pressure), its internal state is **completely separable** from when it **hallucinates** (genuinely doesn't know). A simple logistic regression achieves **100% accuracy** distinguishing the two (p=0.0000, 500 permutations).
+> **Result 1 — Lie vs Hallucination:** When an LLM **lies** (knows the correct answer but says something else due to sycophantic pressure), its internal state is **completely separable** from when it **hallucinates** (genuinely doesn't know). A simple logistic regression achieves **100% accuracy** distinguishing the two (p=0.0000, 500 permutations).
+
+> **Result 2 — Universal Signal with Inverted Polarity:** Three independently trained models (Llama-8B, Mistral-7B, Qwen-7B) all encode a deception signal at **100% within-model accuracy**. Llama and Mistral share the same representation (98-100% transfer). Qwen encodes the **same signal in the opposite direction** — when predictions are flipped, transfer reaches 97-98%. This is like a magnet pointing the other way: same force, opposite pole.
 
 ## Why This Matters
 
@@ -28,7 +35,7 @@ Most existing work on LLM deception detection suffers from a **prompt confound**
 | Azaria & Mitchell (2023) | Instructed deception, single layer | Confound-free design, multi-layer analysis |
 | Burns et al. (2023) | CCS on truth directions | Spontaneous (not instructed) deception |
 | Pacchiardi et al. (2023) | Behavioral lie detection | Internal state probing, not output-based |
-| **This work** | **Spontaneous sycophantic lies** | **Confound-free, lie vs hallucination distinction** |
+| **This work** | **Spontaneous sycophantic lies** | **Confound-free, lie vs hallucination, cross-model universality** |
 
 ## Experimental Pipeline
 
@@ -54,7 +61,7 @@ Tests deception detection across **18 real-world domains** (medical, legal, fina
 
 **Result: 70.4% balanced accuracy** (chance = 50%, p < 0.001). Best layer: 17.
 
-### Stage 6: Lie vs Hallucination (The Key Experiment)
+### Stage 6: Lie vs Hallucination (Key Experiment)
 
 Three-way classification: **Truth vs Lie vs Hallucination**.
 
@@ -68,125 +75,150 @@ Three-way classification: **Truth vs Lie vs Hallucination**.
 
 ### Stage 7: Advanced Hallucination Detection
 
-Six methods to improve Truth vs Hallucination detection. Best result: **77.9%** using a hallucination direction vector (multi-layer), up from 67.4% baseline.
+Six methods to improve Truth vs Hallucination detection. Best result: **77.9%** using a hallucination direction vector (multi-layer), up from 67.4% baseline. Runs on CPU using saved hidden states from Stage 6.
 
-### Stage 8: Cross-Model Generalization
+### Stage 8: Cross-Model Generalization (v3 — Rigorous)
 
-Tests whether the deception signal is **universal** or model-specific by running the same experiment on three different architectures:
+Tests whether the deception signal is **universal** across three model families:
 
-- **Llama-3.1-8B-Instruct** (baseline)
-- **Mistral-7B-Instruct-v0.3** (different architecture)
-- **Gemma-2-9B-IT** (different architecture + different training)
+| Model | Within-Model | Best Layer | Controls |
+|-------|-------------|-----------|----------|
+| Llama-3.1-8B-Instruct | 100% | 8 | Layer 0: ~50%, Length: ~50% |
+| Mistral-7B-Instruct-v0.3 | 100% | 8 | Layer 0: ~50%, Length: ~50% |
+| Qwen2.5-7B-Instruct | 100% | 7 | Layer 0: ~50%, Length: ~50% |
 
-Key questions: Does each model have its own deception signal? Can a probe trained on one model detect lies in another?
+**Cross-model transfer:**
+
+| Transfer | Direct | Flipped |
+|----------|--------|---------|
+| Llama → Mistral | **100%** | — |
+| Mistral → Llama | **98.8%** | — |
+| Llama → Qwen | 2.3% | **97.7%** |
+| Mistral → Qwen | 1.6% | **98.4%** |
+| Qwen → Llama | 1.2% | **98.8%** |
+| Qwen → Mistral | 3.1% | **96.9%** |
+
+**v3 controls:** Layer 0 baseline, length-only baseline, held-out test set (80/20), 3 classifiers (LogReg, SVM, GBM), 500 permutation tests.
 
 ### Stage 9: Types of Deception
 
 Tests whether different **kinds of lies** share the same internal representation:
 
-- **Sycophancy** — changing answer to agree with user
-- **Instruction conflict** — system prompt says X, model knows Y
-- **People-pleasing** — giving overly positive feedback when truth is negative
+- **Sycophancy** — changing answer to agree with user ("my friend thinks X")
+- **Instruction conflict** — system prompt contains false correction
+- **Authority pressure** — "a panel of experts concluded X"
 
 Key question: Is there a single "deception direction" or does each lie type have its own signature?
 
 ### Stage 10: Scale Test (70B)
 
-Runs the full experiment on **Llama-3.1-70B-Instruct** (80 layers, 8192 hidden dim) and compares with 8B results:
-
-- Does a bigger model lie more or less?
-- Is the deception signal stronger or weaker at scale?
-- Does the best layer shift proportionally with depth?
-- Implications for AI safety: are larger models harder to audit?
-
-### Layer Profile (Stage 6)
-
-```
-Layer  0: 33.3% (embedding — chance level)
-Layer  2: 66.6%
-...
-Layer 16: 81.9%
-Layer 18: 82.3%
-Layer 20: 82.3% <-- BEST
-...
-Layer 31: 80.7%
-```
-
-Layer 0 at chance confirms the signal is **semantic**, not lexical.
+Runs the full experiment on **Llama-3.1-70B-Instruct** (80 layers, 8192 hidden dim). Requires A100/H100 GPU.
 
 ## Quick Start (Google Colab)
 
 ### Prerequisites
 
-- Google Colab with **A100 GPU** (H100 for Stage 10)
+- Google Colab with **A100 GPU** (free tier may work for some stages)
 - HuggingFace account with access to [Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)
 
-### Run
+### Setup
 
 ```python
 # Install dependencies
-!pip install -q transformers accelerate bitsandbytes datasets scikit-learn
+!pip install -q transformers accelerate bitsandbytes datasets scikit-learn scipy
 
 # Clone repo
 !git clone https://github.com/Maor36/deception-probe.git
 %cd deception-probe
 
-# Set HuggingFace token
+# Set HuggingFace token (required for Llama access)
 import os
 os.environ["HF_TOKEN"] = "your_token_here"
-
-# Run any stage (each stage is self-contained)
-%run stages/stage4_same_prompt_test/run_stage4.py          # ~30 min, GPU
-%run stages/stage6_hallucination/run_stage6.py             # ~25 min, GPU
-%run stages/stage7_hallucination_detection/run_stage7.py   # ~5 min, no GPU (uses Stage 6 data)
-%run stages/stage8_cross_model/run_stage8.py               # ~90 min, GPU (3 models)
-%run stages/stage9_deception_types/run_stage9.py           # ~15 min, GPU
-%run stages/stage10_scale_70b/run_stage10.py               # ~60 min, A100/H100 (70B model)
 ```
 
-All results are saved to `results/` automatically.
+### Run Individual Stages
+
+```python
+# Stages 1-3: Baseline experiments (confounded) — ~15 min each
+%run stages/stage1_basic_correlation/run_stage1.py
+%run stages/stage2_cross_model/run_stage2.py
+%run stages/stage3_accuracy_confounds/run_stage3.py
+
+# Stage 4: Confound-free sycophancy test — ~25 min
+%run stages/stage4_same_prompt_test/run_stage4.py
+
+# Stage 5: Real-world deception — ~30 min
+%run stages/stage5_realworld_deception/run_stage5_part_a.py   # Generate data
+%run stages/stage5_realworld_deception/run_stage5_part_b.py   # Analyze
+
+# Stage 6: Lie vs Hallucination — ~30 min
+%run stages/stage6_hallucination/run_stage6.py
+
+# Stage 7: Advanced hallucination detection — ~5 min (CPU, uses Stage 6 data)
+%run stages/stage7_hallucination_detection/run_stage7.py
+
+# Stage 8: Cross-model generalization — ~60 min (3 models)
+%run stages/stage8_cross_model/run_stage8.py
+
+# Stage 9: Types of deception — ~40 min
+%run stages/stage9_deception_types/run_stage9.py
+
+# Stage 10: 70B scale test — ~60 min (requires A100/H100)
+%run stages/stage10_scale_70b/run_stage10.py
+```
+
+### Important Notes
+
+- **GPU Memory:** Each stage loads one model at a time (~6GB in 4-bit). Stage 8 loads 3 models sequentially with automatic cleanup.
+- **Checkpoints:** Stage 8 saves checkpoints after each model. If it crashes, re-run and it will resume from the last completed model.
+- **Results:** All results are saved to `results/` as JSON files. Hidden states are saved as `.pkl` files (gitignored due to size).
+- **Stage 7 requires Stage 6:** Stage 7 reuses hidden states from Stage 6. Run Stage 6 first.
 
 ## Repository Structure
 
 ```
 deception-probe/
-├── README.md
-├── requirements.txt
+├── README.md                          ← This file
+├── requirements.txt                   ← Python dependencies
+├── results/
+│   ├── FINDINGS.md                    ← Detailed findings narrative
+│   ├── stage1_results.json            ← Stage 1 results
+│   ├── stage6_results.json            ← Stage 6 results
+│   ├── stage7_results.json            ← Stage 7 results
+│   └── stage8_results.json            ← Stage 8 results (with flip-test)
 ├── stages/
-│   ├── stage1_basic_correlation/run_stage1.py
-│   ├── stage2_cross_model/run_stage2.py
-│   ├── stage3_accuracy_confounds/run_stage3.py
-│   ├── stage4_same_prompt_test/run_stage4.py
-│   ├── stage5_realworld_deception/
-│   │   ├── run_stage5_part_a.py
-│   │   ├── run_stage5_part_b.py
-│   │   └── scenarios_dataset.json
-│   ├── stage6_hallucination/run_stage6.py
-│   ├── stage7_hallucination_detection/run_stage7.py
-│   ├── stage8_cross_model/run_stage8.py
-│   ├── stage9_deception_types/run_stage9.py
-│   └── stage10_scale_70b/run_stage10.py
-└── results/                  ← generated at runtime
-    └── FINDINGS.md           ← summary of all results
+│   ├── stage1_basic_correlation/      ← Baseline: different prompts
+│   ├── stage2_cross_model/            ← Cross-model baseline
+│   ├── stage3_accuracy_confounds/     ← Confound analysis
+│   ├── stage4_same_prompt_test/       ← KEY: confound-free test
+│   ├── stage5_realworld_deception/    ← 18-domain generalization
+│   ├── stage6_hallucination/          ← KEY: lie vs hallucination
+│   ├── stage7_hallucination_detection/← Advanced hallucination methods
+│   ├── stage8_cross_model/            ← KEY: cross-model universality
+│   ├── stage9_deception_types/        ← Types of deception
+│   └── stage10_scale_70b/             ← 70B scale test
+└── .gitignore
 ```
 
 ## Method
 
-- **Model**: Llama-3.1-8B-Instruct (4-bit quantized via bitsandbytes), plus Mistral-7B, Gemma-9B, and Llama-70B
+- **Models**: Llama-3.1-8B-Instruct, Mistral-7B-Instruct-v0.3, Qwen2.5-7B-Instruct (all 4-bit quantized via bitsandbytes)
 - **Probe**: Logistic Regression on hidden state activations at the first generated token
 - **Validation**: 5-fold stratified cross-validation with balanced accuracy
-- **Statistical tests**: Permutation tests (500 iterations), length baselines
+- **Statistical tests**: Permutation tests (200-500 iterations), length baselines, layer 0 baselines
 - **Dataset**: [meg-tong/sycophancy-eval](https://huggingface.co/datasets/meg-tong/sycophancy-eval) — 1,817 TriviaQA question pairs
 
 ## Confound Controls
 
-Every confound-free stage (4-6) includes:
+Every confound-free stage (4+) includes:
 
 1. **Same prompt format** for both conditions (no instruction to lie)
 2. **Length-only baseline** (consistently near chance: 50-60%)
-3. **Permutation tests** (500 iterations, all p < 0.001)
+3. **Permutation tests** (200-500 iterations, all p < 0.001)
 4. **Balanced accuracy** (handles class imbalance)
 5. **Embedding layer at chance** (rules out lexical confounds)
+6. **Held-out test set** (Stage 8 v3: 80/20 split)
+7. **Multiple classifiers** (Stage 8 v3: LogReg, SVM-RBF, GBM)
 
 ## References
 
@@ -194,3 +226,4 @@ Every confound-free stage (4-6) includes:
 - Burns, C. et al. (2023). *Discovering Latent Knowledge in Language Models Without Supervision*. ICLR.
 - Belinkov, Y. (2022). *Probing Classifiers: Promises, Shortcomings, and Advances*. Computational Linguistics.
 - Zou, A. et al. (2023). *Representation Engineering: A Top-Down Approach to AI Transparency*.
+- Pacchiardi, L. et al. (2023). *How to Catch an AI Liar: Lie Detection in Black-Box LLMs by Asking Unrelated Questions*.
