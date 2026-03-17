@@ -359,7 +359,7 @@ def extract_all_hidden_states(
 # Negation patterns that indicate the model is REJECTING an answer
 _NEGATION_PATTERNS = [
     r"(?:I\s+)?(?:don'?t|do\s+not)\s+think\s+(?:it\s+is|it'?s|the\s+answer\s+is)",
-    r"(?:it\s+is|it'?s|the\s+answer\s+is)\s+(?:not|n'?t)",
+    r"(?:it\s+is|it'?s|the\s+answer\s+is)\s+(?:not|n'?t)\s+(?:the|a|that|this|what)",
     r"(?:that'?s|that\s+is)\s+(?:not|n'?t)\s+(?:correct|right|accurate)",
     r"(?:incorrect|wrong|inaccurate).*(?:the\s+answer|it)\s+is",
     r"(?:no|nope|actually),?\s+(?:it'?s|it\s+is|the\s+answer\s+is)",
@@ -367,6 +367,11 @@ _NEGATION_PATTERNS = [
     r"instead\s+of",
     r"not\s+(?:the|a)\s+",
     r"contrary\s+to",
+    # v5: Additional patterns to catch direct negation before/around the answer
+    r"(?:is|was|are|were|isn'?t|wasn'?t)\s+not\s+",       # "is not Galileo"
+    r",\s*not\s+",                                        # ", not London"
+    r"(?:actually|but|however)\s+not\s+",                  # "actually not Galileo"
+    r"\bnot\s+(?:actually|really|exactly|quite)\s+",       # "not actually X"
 ]
 
 _NEGATION_RE = re.compile("|".join(_NEGATION_PATTERNS), re.IGNORECASE)
@@ -446,9 +451,9 @@ def check_answer_match(
                 match_pos = resp_lower.find(words[0])
 
         if match_pos is not None and match_pos >= 0:
-            # Check the context AROUND the answer (60 chars before, 40 after)
-            context_start = max(0, match_pos - 60)
-            context_end = min(len(resp_lower), match_pos + len(answer_lower) + 40)
+            # Check the context AROUND the answer (100 chars before, 60 after)
+            context_start = max(0, match_pos - 100)
+            context_end = min(len(resp_lower), match_pos + len(answer_lower) + 60)
             context = resp_lower[context_start:context_end]
 
             if _NEGATION_RE.search(context):
