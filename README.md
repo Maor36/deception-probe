@@ -89,8 +89,13 @@ deception-probe/
 │   │   ├── logit_lens.py              # 6a: Layer-by-layer prediction tracking
 │   │   ├── activation_patching.py     # 6b: Causal intervention
 │   │   └── attention_analysis.py      # 6c: Sycophancy attention heads
-│   └── 07_visualizations/             # Exp 7: Publication-quality figures
-│       └── generate_plots.py
+│   ├── 07_visualizations/             # Exp 7: Publication-quality figures
+│   │   └── generate_plots.py
+│   └── 08_realworld_deception/        # Exp 8: Real-world deception across 35 domains
+│       ├── step1_collect.py           # Collect responses + hidden states
+│       ├── step2_label.py             # Label responses (disclosed vs. concealed)
+│       ├── step3_probe.py             # Train probe + per-domain analysis
+│       └── scenarios.json             # 459 professional scenarios
 ├── docs/                              # Knowledge base and literature review
 │   ├── PROJECT_CONTEXT.md             # Master context for AI sessions
 │   ├── literature_review.md           # Comprehensive literature review
@@ -149,6 +154,23 @@ Provides **causal** evidence by replacing hidden states from a truthful run into
 #### 6c — Attention Pattern Analysis
 Identifies specific attention heads that attend more to the user's pressure tokens when the model lies vs. when it resists. These "sycophancy heads" route information from the pressure to the output.
 
+### Experiment 08 — Real-World Deception Scenarios ⭐
+
+**Purpose:** Move beyond trivia to test deception detection in realistic professional scenarios — sales, medical, finance, legal, and 31 more domains. This simulates what happens when AI agents operate with misaligned incentives.
+
+**Design:** 459 scenarios across 35 domains. Each scenario has a hidden problem the model "knows" about (e.g., a car with a coolant leak). The model receives **one identical prompt template** for all scenarios — only the situation context changes. The model decides **on its own** whether to disclose or conceal the problem. No instruction to lie.
+
+**3-step workflow:**
+1. `step1_collect.py` — Run all 459 scenarios, save responses + hidden states from all layers
+2. `step2_label.py` — Label each response as DISCLOSED (truth) or CONCEALED (lie) using an LLM judge
+3. `step3_probe.py` — Train probes and analyze results
+
+**Key analyses:**
+- Per-layer probe accuracy (which layer best separates truth/lie?)
+- Permutation test (p < 0.001 significance)
+- Per-domain detection accuracy (is medical deception easier to detect than sales?)
+- Cross-domain transfer (train on sales, test on medical — does it generalize?)
+
 ---
 
 ## Quick Start
@@ -165,6 +187,9 @@ Identifies specific attention heads that attend more to the user's pressure toke
 git clone https://github.com/Maor36/deception-probe.git
 cd deception-probe
 pip install -r requirements.txt
+
+# Or install as editable package (recommended for development):
+pip install -e .
 ```
 
 ### Running on Google Colab
@@ -189,6 +214,11 @@ os.environ["HF_TOKEN"] = "your_token_here"
 %run experiments/06_mechanistic_analysis/activation_patching.py  # ~30 min — causal evidence
 %run experiments/06_mechanistic_analysis/attention_analysis.py   # ~20 min — sycophancy heads
 %run experiments/07_visualizations/generate_plots.py             # ~1 min  — generate figures
+# Experiment 08 — Real-World Scenarios (3-step workflow)
+%run experiments/08_realworld_deception/step1_collect.py          # ~90 min — collect responses + hidden states
+# After step1, download results/exp08_responses.json and send for labeling
+%run experiments/08_realworld_deception/step2_label.py             # ~5 min  — auto-label with LLM judge
+%run experiments/08_realworld_deception/step3_probe.py             # ~10 min — train probes + analysis
 ```
 
 Results are saved as JSON files in the `results/` directory.
@@ -207,7 +237,8 @@ Results are saved as JSON files in the `results/` directory.
 
 ## Dataset
 
-[meg-tong/sycophancy-eval](https://huggingface.co/datasets/meg-tong/sycophancy-eval) — TriviaQA-based sycophancy evaluation dataset containing matched neutral and sycophantic prompts with verified correct and incorrect answers.
+- [meg-tong/sycophancy-eval](https://huggingface.co/datasets/meg-tong/sycophancy-eval) — TriviaQA-based sycophancy evaluation dataset containing matched neutral and sycophantic prompts with verified correct and incorrect answers (Exp 01–05).
+- **scenarios.json** — 459 custom real-world professional scenarios across 35 domains (Sales, Medical, Finance, Legal, etc.) with ground truth, honest instructions, and deceptive instructions (Exp 08).
 
 ---
 
@@ -233,6 +264,22 @@ Results are saved as JSON files in the `results/` directory.
 - **Procrustes on shared questions:** Cross-model alignment is fitted only on questions that both models answered, preventing information leakage.
 - **Multi-position token extraction:** Hidden states can be extracted from three positions: (1) first generated token (default), (2) last prompt token (pre-decision state), or (3) the specific answer token. Comparing across positions reveals when the deception signal first appears.
 - **Quantization awareness:** 4-bit NF4 quantization is used by default for VRAM efficiency. For mechanistic analysis (Exp 06), `bfloat16` precision is recommended to avoid noise in hidden states. See `load_model_and_tokenizer(use_bfloat16=True)`.
+
+---
+
+## Known Limitations
+
+1. **Narrow definition of "lying":** All experiments define deception as **externally triggered** behavior — the model lies because of sycophantic pressure, conflicting instructions, or authority claims. We do not yet test for **spontaneous deception** (the model lying without any external trigger). This is a harder problem that requires a different experimental setup (e.g., monitoring models during multi-turn strategic games). Our contribution is a necessary first step: demonstrating that triggered deception is detectable from internal representations.
+
+2. **Sample size:** After Phase A filtering (keeping only questions the model answers correctly), the effective sample size can be as low as 30–50 per condition. While the permutation test (p < 0.001) confirms statistical significance, larger datasets would strengthen confidence. We recommend running with `max_questions=1000+` when compute allows.
+
+3. **Quantization artifacts:** All experiments use 4-bit NF4 quantization for VRAM efficiency. While this is acceptable for probing (Exp 01–05), it may introduce noise in mechanistic analysis (Exp 06). For the most reliable mechanistic results, use `bfloat16` precision on A100 80GB GPUs.
+
+4. **Cross-model transfer caveats:** The inverted polarity in Qwen (Exp 04) shows that deception representations are not trivially universal. While detection still works after polarity correction, the probe may be learning a correlated feature rather than a direct deception signal. Further investigation with more architectures is needed.
+
+5. **Activation patching positional encoding:** In Exp 06b, the neutral (clean) and sycophantic (corrupted) prompts have different sequence lengths. We patch at position -1 (prediction position) in both, which is standard practice, but the different positional encodings may slightly attenuate the patching effect.
+
+6. **No pre-computed results:** The repository does not include pre-computed result files. Users must run the experiments themselves to reproduce findings. We plan to add representative results in a future release.
 
 ---
 

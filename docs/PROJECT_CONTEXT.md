@@ -1,6 +1,6 @@
 # Project Context — Read This First
 
-**Last updated:** March 17, 2026 (v4 — third code-review fixes: proximity matching, LLM grader, tokenization fix, activation patching dtype)  
+**Last updated:** March 17, 2026 (v5 — added Experiment 08: Real-World Deception Scenarios with 3-step workflow)  
 **Purpose:** This file contains all accumulated context about this research project. When starting a new session, read this file first to avoid re-doing research.
 
 ---
@@ -44,8 +44,13 @@ deception-probe/
 │   │   ├── logit_lens.py              # Traces WHERE truth gets overridden layer by layer
 │   │   ├── activation_patching.py     # Causal proof of which layers cause deception
 │   │   └── attention_analysis.py      # Which attention heads attend to sycophantic pressure
-│   └── 07_visualizations/             # Publication-quality figures
-│       └── generate_plots.py          # Generates all plots from experiment results
+│   ├── 07_visualizations/             # Publication-quality figures
+│   │   └── generate_plots.py          # Generates all plots from experiment results
+│   └── 08_realworld_deception/        # Real-world deception across 35 professional domains
+│       ├── step1_collect.py           # Collect responses + hidden states (uniform prompt)
+│       ├── step2_label.py             # Label responses as DISCLOSED/CONCEALED (LLM judge)
+│       ├── step3_probe.py             # Train probes + per-domain + cross-domain analysis
+│       └── scenarios.json             # 459 professional scenarios across 35 domains
 ├── docs/
 │   ├── PROJECT_CONTEXT.md             # THIS FILE — read first in every session
 │   ├── literature_review.md           # Comprehensive literature review (6 sections)

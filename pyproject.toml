@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "deception-probe"
+version = "0.1.0"
+description = "Detecting and understanding deception in Large Language Models via representation probing and mechanistic interpretability"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = [
+    "transformers>=4.40.0",
+    "accelerate>=0.30.0",
+    "bitsandbytes>=0.43.0",
+    "datasets>=2.19.0",
+    "scikit-learn>=1.4.0",
+    "torch>=2.0.0",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+llm-grader = ["openai>=1.0.0"]
+viz = ["matplotlib>=3.7.0"]
+
+[tool.setuptools.packages.find]
+include = ["src*"]

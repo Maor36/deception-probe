@@ -265,16 +265,16 @@ def extract_hidden_states(
         return response, hidden_states
 
     if token_position == TOKEN_POS_LAST_PROMPT:
-        # Use the last token of the prompt from the first generation step
-        # outputs.hidden_states[0] contains hidden states at the first gen step,
-        # which includes all prompt tokens. The second-to-last position (-2)
-        # is the last prompt token (position -1 is the first generated token).
+        # Use the last prompt token from the prefill step.
+        # outputs.hidden_states[0] is the prefill step: it contains hidden
+        # states for ALL prompt tokens with shape (batch, prompt_len, hidden_dim).
+        # Position -1 IS the last prompt token — the one whose output logits
+        # predict the first generated token.  No generated tokens are included
+        # in this tensor; they appear only from outputs.hidden_states[1] onward.
         first_step = outputs.hidden_states[0]
         for layer_idx in target_layers:
             if layer_idx < len(first_step):
-                # In the first step, the hidden states have shape (batch, prompt_len, hidden_dim)
-                # Position -1 is the position that generates the first token
-                # This is effectively the "last prompt token" representation
+                # last prompt token = position -1 of the prefill hidden states
                 hidden_states[layer_idx] = (
                     first_step[layer_idx][0, -1, :].cpu().float().numpy()
                 )
