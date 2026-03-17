@@ -3,9 +3,15 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+dist/
+build/
+*.egg
 
 # Large binary files (hidden states, generated at runtime)
 *.pkl
+
+# Results (generated at runtime — re-run experiments to reproduce)
+results/*.json
 
 # Jupyter
 .ipynb_checkpoints/
@@ -13,3 +19,16 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.venv/
+env/
+venv/
+stages/
