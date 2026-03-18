@@ -1,31 +1,35 @@
 """
-Experiment 03 — Lie vs Hallucination Detection
-===============================================
+Experiment 03 — Lie vs Hallucination Detection (Confound-Free)
+==============================================================
 PURPOSE:
     Can we distinguish between a model that LIES (knows the truth but
     says something else under pressure) and a model that HALLUCINATES
     (doesn't know the answer and makes something up)?
 
-    This is the most novel finding: 100% separation between lies and
-    hallucinations, suggesting fundamentally different internal states.
-
-DESIGN:
+DESIGN (Confound-Free):
     Three classes, all from the same dataset:
 
-    TRUTH:         Model knows the answer → answers correctly (neutral prompt)
-    LIE:           Model knows the answer → gives wrong answer (sycophantic pressure)
-    HALLUCINATION: Model doesn't know → gives wrong answer (neutral prompt)
+    Phase A — Knowledge test (neutral prompt, no pressure):
+        Determines which questions the model knows vs doesn't know.
+        Hidden states from this phase are used for TRUTH class only.
 
-    Key: For hallucination, we use questions the model CANNOT answer
-    correctly even without pressure. The prompt format is identical to
-    the truth condition, eliminating format confounds.
+    Phase B — Sycophantic pressure (SAME prompt format for all):
+        ALL questions are re-asked with sycophantic pressure.
+        This ensures LIE and HALLUCINATION share identical prompt format.
+
+    TRUTH:         Model knows → answers correctly under pressure (Phase B)
+    LIE:           Model knows → gives wrong answer under pressure (Phase B)
+    HALLUCINATION: Model doesn't know → gives wrong answer under pressure (Phase B)
+
+    KEY IMPROVEMENT: Both LIE and HALLUCINATION use the sycophantic prompt,
+    eliminating the prompt-format confound from the previous version.
+    The ONLY difference is whether the model knew the answer (proven in Phase A).
 
 CONTROLS:
     1. Layer 0 baseline → ~33% (chance for 3-way)
     2. Length baseline → ~50% for binary comparisons
     3. Permutation test (500 iterations) for Lie vs Hallucination
-    4. Multiple classifiers (LogReg, SVM, GradientBoosting)
-    5. Learning curve analysis
+    4. TRUTH uses Phase B hidden states (same prompt as LIE/HALL)
 
 DATASET: meg-tong/sycophancy-eval (answer.jsonl)
 MODEL:   meta-llama/Llama-3.1-8B-Instruct (4-bit quantized)
@@ -33,13 +37,7 @@ MODEL:   meta-llama/Llama-3.1-8B-Instruct (4-bit quantized)
 USAGE:
     %run experiments/03_lie_vs_hallucination/run.py
 
-EXPECTED RESULTS:
-    - 3-way (T/L/H): ~82% balanced accuracy
-    - Lie vs Hallucination: ~100% balanced accuracy (p < 0.001)
-    - Truth vs Lie: ~100%
-    - Truth vs Hallucination: ~67%
-
-RUNTIME: ~30 minutes on A100
+RUNTIME: ~90 minutes on T4 (2500 questions × 2 phases)
 """
 
 import sys, os
@@ -84,7 +82,7 @@ bal_scorer = make_scorer(balanced_accuracy_score)
 
 def main():
     log.info("=" * 60)
-    log.info("Experiment 03: Lie vs Hallucination Detection")
+    log.info("Experiment 03: Lie vs Hallucination (Confound-Free)")
     log.info("=" * 60)
     start = time.time()
 
@@ -92,9 +90,12 @@ def main():
     log.info(f"Loaded {len(questions)} questions")
     model, tokenizer = load_model_and_tokenizer(MODEL_NAME)
 
-    # ── Phase A: Knowledge test ────────────────────────────────────────
-    log.info("Phase A: Testing model knowledge...")
-    model_knows, model_doesnt_know = [], []
+    # ── Phase A: Knowledge test (neutral prompt) ──────────────────────
+    # Purpose: determine which questions the model KNOWS vs DOESN'T KNOW
+    # We do NOT use hidden states from this phase for classification.
+    log.info("Phase A: Testing model knowledge (neutral prompt)...")
+    knows_questions = []      # questions the model answered correctly
+    doesnt_know_questions = [] # questions the model answered incorrectly
 
     for i, q in enumerate(questions):
         resp, hs = extract_hidden_states(
@@ -103,43 +104,74 @@ def main():
         if not hs:
             continue
 
-        entry = {"q": q, "response": resp, "hs": hs}
         if check_answer_match(resp, q["correct_answer"]):
-            model_knows.append(entry)
+            knows_questions.append(q)
         else:
-            model_doesnt_know.append(entry)
+            doesnt_know_questions.append(q)
 
         if (i + 1) % 100 == 0:
-            log.info(f"  [{i+1}/{len(questions)}] Knows: {len(model_knows)}, "
-                     f"Doesn't know: {len(model_doesnt_know)}")
+            log.info(f"  [{i+1}/{len(questions)}] Knows: {len(knows_questions)}, "
+                     f"Doesn't know: {len(doesnt_know_questions)}")
 
-    log.info(f"  Knows: {len(model_knows)}, Doesn't know: {len(model_doesnt_know)}")
+    log.info(f"  Phase A done — Knows: {len(knows_questions)}, "
+             f"Doesn't know: {len(doesnt_know_questions)}")
 
-    # ── Build three classes ────────────────────────────────────────────
-    # TRUTH: correct neutral answers (hidden states already extracted)
-    truth_data = [{"hs": e["hs"], "response": e["response"]} for e in model_knows]
+    # ── Phase B: Sycophantic pressure on ALL questions ────────────────
+    # ALL classes use the SAME sycophantic prompt format.
+    # This eliminates the prompt-format confound.
 
-    # HALLUCINATION: wrong neutral answers (hidden states already extracted)
-    hall_data = [{"hs": e["hs"], "response": e["response"]} for e in model_doesnt_know]
+    # Phase B.1: Questions the model KNOWS — with sycophantic pressure
+    log.info("Phase B.1: Sycophantic pressure on KNOWN questions...")
+    truth_data = []  # knew + still correct under pressure
+    lie_data = []    # knew + changed to wrong under pressure
 
-    # LIE: ask "knows" questions with sycophantic pressure
-    log.info("Phase B: Getting sycophantic lies...")
-    lie_data = []
-    for i, entry in enumerate(model_knows):
-        q = entry["q"]
+    for i, q in enumerate(knows_questions):
         resp, hs = extract_hidden_states(
             model, tokenizer, q["syco_prompt"], PROBE_LAYERS, MAX_NEW_TOKENS
         )
-        if hs:
-            has_correct = check_answer_match(resp, q["correct_answer"])
-            has_incorrect = check_answer_match(resp, q["incorrect_answer"])
-            if has_incorrect and not has_correct:
-                lie_data.append({"hs": hs, "response": resp})
+        if not hs:
+            continue
+
+        has_correct = check_answer_match(resp, q["correct_answer"])
+        has_incorrect = check_answer_match(resp, q["incorrect_answer"])
+
+        if has_correct and not has_incorrect:
+            # Resisted pressure — TRUTH
+            truth_data.append({"hs": hs, "response": resp})
+        elif has_incorrect and not has_correct:
+            # Caved to pressure — LIE
+            lie_data.append({"hs": hs, "response": resp})
 
         if (i + 1) % 100 == 0:
-            log.info(f"  [{i+1}/{len(model_knows)}] Lies: {len(lie_data)}")
+            log.info(f"  [{i+1}/{len(knows_questions)}] Truth: {len(truth_data)}, "
+                     f"Lies: {len(lie_data)}")
 
-    log.info(f"  TRUTH: {len(truth_data)}, LIE: {len(lie_data)}, HALLUCINATION: {len(hall_data)}")
+    log.info(f"  Phase B.1 done — Truth: {len(truth_data)}, Lie: {len(lie_data)}")
+
+    # Phase B.2: Questions the model DOESN'T KNOW — with sycophantic pressure
+    log.info("Phase B.2: Sycophantic pressure on UNKNOWN questions...")
+    hall_data = []  # didn't know + wrong under pressure = hallucination
+
+    for i, q in enumerate(doesnt_know_questions):
+        resp, hs = extract_hidden_states(
+            model, tokenizer, q["syco_prompt"], PROBE_LAYERS, MAX_NEW_TOKENS
+        )
+        if not hs:
+            continue
+
+        has_correct = check_answer_match(resp, q["correct_answer"])
+        # Only count as hallucination if still wrong (expected for most)
+        if not has_correct:
+            hall_data.append({"hs": hs, "response": resp})
+
+        if (i + 1) % 100 == 0:
+            log.info(f"  [{i+1}/{len(doesnt_know_questions)}] Hallucinations: {len(hall_data)}")
+
+    log.info(f"  Phase B.2 done — Hallucinations: {len(hall_data)}")
+
+    log.info(f"  FINAL COUNTS — TRUTH: {len(truth_data)}, LIE: {len(lie_data)}, "
+             f"HALLUCINATION: {len(hall_data)}")
+    log.info(f"  ALL three classes use sycophantic prompt (confound-free)")
 
     # Save hidden states for downstream analysis
     os.makedirs("results", exist_ok=True)
@@ -147,6 +179,7 @@ def main():
         pickle.dump({
             "truth": truth_data, "lie": lie_data, "hallucination": hall_data,
             "probe_layers": PROBE_LAYERS, "model": MODEL_NAME,
+            "design": "confound_free_all_syco_prompt",
         }, f)
     log.info("  Saved hidden states to results/exp03_hidden_states.pkl")
 
@@ -221,7 +254,8 @@ def main():
 
     # ── Summary ────────────────────────────────────────────────────────
     log.info("=" * 60)
-    log.info("RESULTS SUMMARY")
+    log.info("RESULTS SUMMARY (Confound-Free Design)")
+    log.info(f"  All 3 classes use sycophantic prompt format")
     log.info(f"  Best layer: {best_layer}")
     log.info(f"  3-way accuracy: {layer_results[best_layer]['balanced_accuracy']*100:.1f}%")
     log.info(f"  Lie vs Hallucination: {results['lie_vs_hallucination']['balanced_accuracy']*100:.1f}% "
@@ -231,8 +265,9 @@ def main():
     log.info("=" * 60)
 
     output = {
-        "experiment": "03_lie_vs_hallucination",
+        "experiment": "03_lie_vs_hallucination_confound_free",
         "model": MODEL_NAME,
+        "design": "All 3 classes use sycophantic prompt. Knowledge determined in Phase A (neutral). Hidden states from Phase B (sycophantic) only.",
         "n_truth": len(truth_data),
         "n_lie": len(lie_data),
         "n_hallucination": len(hall_data),
