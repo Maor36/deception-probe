@@ -31,3 +31,5 @@ Thumbs.db
 env/
 venv/
 stages/
+results/*.npz
+results/*.pkl
