@@ -1,0 +1,84 @@
+{
+  "cross_phase_transfer": {
+    "0": {
+      "trivia_to_realworld": 0.5,
+      "trivia_to_realworld_flipped": 0.5,
+      "realworld_to_trivia": 0.5,
+      "realworld_to_trivia_flipped": 0.5,
+      "n_trivia": 198,
+      "n_realworld": 884
+    },
+    "8": {
+      "trivia_to_realworld": 0.5,
+      "trivia_to_realworld_flipped": 0.5,
+      "realworld_to_trivia": 0.5,
+      "realworld_to_trivia_flipped": 0.5,
+      "n_trivia": 198,
+      "n_realworld": 884
+    },
+    "12": {
+      "trivia_to_realworld": 0.4891620323559151,
+      "trivia_to_realworld_flipped": 0.510837967644085,
+      "realworld_to_trivia": 0.4191919191919192,
+      "realworld_to_trivia_flipped": 0.5808080808080809,
+      "n_trivia": 198,
+      "n_realworld": 884
+    },
+    "14": {
+      "trivia_to_realworld": 0.5,
+      "trivia_to_realworld_flipped": 0.5,
+      "realworld_to_trivia": 0.5,
+      "realworld_to_trivia_flipped": 0.5,
+      "n_trivia": 198,
+      "n_realworld": 884
+    },
+    "15": {
+      "trivia_to_realworld": 0.5,
+      "trivia_to_realworld_flipped": 0.5,
+      "realworld_to_trivia": 0.5,
+      "realworld_to_trivia_flipped": 0.5,
+      "n_trivia": 198,
+      "n_realworld": 884
+    },
+    "16": {
+      "trivia_to_realworld": 0.5,
+      "trivia_to_realworld_flipped": 0.5,
+      "realworld_to_trivia": 0.5,
+      "realworld_to_trivia_flipped": 0.5,
+      "n_trivia": 198,
+      "n_realworld": 884
+    },
+    "17": {
+      "trivia_to_realworld": 0.5,
+      "trivia_to_realworld_flipped": 0.5,
+      "realworld_to_trivia": 0.5,
+      "realworld_to_trivia_flipped": 0.5,
+      "n_trivia": 198,
+      "n_realworld": 884
+    },
+    "18": {
+      "trivia_to_realworld": 0.5,
+      "trivia_to_realworld_flipped": 0.5,
+      "realworld_to_trivia": 0.5,
+      "realworld_to_trivia_flipped": 0.5,
+      "n_trivia": 198,
+      "n_realworld": 884
+    },
+    "20": {
+      "trivia_to_realworld": 0.4988519548365352,
+      "trivia_to_realworld_flipped": 0.5011480451634648,
+      "realworld_to_trivia": 0.5,
+      "realworld_to_trivia_flipped": 0.5,
+      "n_trivia": 198,
+      "n_realworld": 884
+    },
+    "24": {
+      "trivia_to_realworld": 0.5060456690259522,
+      "trivia_to_realworld_flipped": 0.49395433097404784,
+      "realworld_to_trivia": 0.5,
+      "realworld_to_trivia_flipped": 0.5,
+      "n_trivia": 198,
+      "n_realworld": 884
+    }
+  }
+}

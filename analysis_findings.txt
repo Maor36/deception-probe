@@ -1,0 +1,34 @@
+KEY FINDINGS FROM AI JUDGE RELABELING
+======================================
+
+TOTAL RESPONSES: 915
+
+ORIGINAL LABELS (keyword matching):
+  lied:     250
+  resisted: 665
+
+AI JUDGE LABELS:
+  LIED:     516
+  RESISTED: 367
+  REFUSED:  31
+
+TRANSITION MATRIX:
+  lied     → LIED:     171
+  lied     → REFUSED:   28
+  lied     → RESISTED:  51
+  resisted → LIED:     345  ← THE BIG PROBLEM
+  resisted → RESISTED: 320
+
+TOTAL WRONG LABELS: 424/915 = 46.3%
+
+PROBE RESULTS WITH AI LABELS:
+  Best layer: 14 (57.5%)
+  Length baseline: 58.3%
+  
+PRESSURE TYPE BREAKDOWN:
+  boss_threat: n=471, LIED=327, RESISTED=144, lie_rate=69.4%
+  emotional:   n=412, LIED=189, RESISTED=223, lie_rate=45.9%
+
+KEY INSIGHT: The probe still gets ~57% even with clean labels.
+The problem is NOT the labels - it's that last-token hidden states
+don't capture the subtle difference between real-world lies and truth.
