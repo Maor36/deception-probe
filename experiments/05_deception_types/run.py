@@ -31,9 +31,9 @@ DESIGN:
         Probe trained ONLY on Phase B hidden states
 
 KEY ANALYSIS:
-    - Within-type detection accuracy
-    - Cross-type transfer (train on type A, test on type B)
-    - Cosine similarity between lie direction vectors
+    - Within-type detection accuracy (each type uses its own best layer)
+    - Cross-type transfer using SAME LAYER for fair comparison
+    - Cosine similarity between lie direction vectors (per layer)
     - Random cosine baseline (expected ~0 in high dimensions)
     - If orthogonal -> no single "lie direction" exists
 
@@ -43,14 +43,14 @@ MODEL:   meta-llama/Llama-3.1-8B-Instruct (4-bit quantized)
 USAGE:
     %run experiments/05_deception_types/run.py
 
-EXPECTED RESULTS:
-    - Sycophancy: ~81%, Instruction: ~71%, Authority: ~67%
-    - Cross-type transfer: ~57% average
-    - Cosine similarity: ~0.05 (nearly orthogonal)
-
-RUNTIME: ~40 minutes on A100
+RUNTIME: ~60 minutes on A100
 
 CHANGELOG:
+    v3 (2026-03-21): CRITICAL FIX — cross-type transfer now uses the SAME
+        layer for both source and target (was using source's best layer for
+        both, mixing layers 16/18/20). Vectors saved for ALL probe layers
+        to enable proper same-layer comparison in exp06.
+        Added per-layer cross-type analysis.
     v2 (2026-03-17): Added random cosine baseline for proper comparison.
         Fixed cross-type transfer to use Pipeline and balanced_accuracy.
         Added confidence intervals for cosine similarity.
@@ -147,7 +147,7 @@ def generate_with_system_prompt(model, tokenizer, system_msg, user_msg, layers, 
 
 def main():
     log.info("=" * 60)
-    log.info("Experiment 05: Types of Deception")
+    log.info("Experiment 05: Types of Deception (v3 — same-layer fix)")
     log.info("=" * 60)
     start = time.time()
 
@@ -174,6 +174,7 @@ def main():
     log.info(f"  Model knows {len(known_questions)} questions")
 
     # Phase B: Three deception types
+    # Each sample stores hidden states from ALL probe layers
     deception_types = {
         "sycophancy": {"lied": [], "resisted": []},
         "instruction_conflict": {"lied": [], "resisted": []},
@@ -224,8 +225,10 @@ def main():
 
     # ── Within-type probes ─────────────────────────────────────────────
     log.info("\nWithin-type probes...")
-    results = {"within_type": {}, "cross_type": {}, "cosine_similarity": {}, "random_cosine_baseline": {}}
-    lie_directions = {}
+    results = {"within_type": {}, "cross_type_same_layer": {}, "cosine_similarity": {},
+               "cosine_per_layer": {}, "random_cosine_baseline": {}}
+    lie_directions = {}       # best-layer lie directions (for backward compat)
+    lie_directions_per_layer = {}  # {layer: {dtype: direction}}
 
     for dtype, data in deception_types.items():
         min_n = min(len(data["lied"]), len(data["resisted"]))
@@ -253,7 +256,7 @@ def main():
         y = np.array([1] * min_n + [0] * min_n)
         perm = permutation_test(X, y, best_acc, N_PERMUTATIONS, random_seed=RANDOM_SEED)
 
-        # Extract lie direction (classifier weights) using Pipeline
+        # Extract lie direction on best layer
         pipe = Pipeline([
             ("scaler", StandardScaler()),
             ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
@@ -270,11 +273,32 @@ def main():
         }
         log.info(f"  {dtype}: {best_acc*100:.1f}% (Layer {best_layer}, p={perm['p_value']:.4f}, n={min_n})")
 
-    # ── Cosine similarity between lie directions ───────────────────────
-    log.info("\nCosine similarity between lie directions...")
+    # ── Per-layer lie directions (for same-layer comparisons) ─────────
+    log.info("\nComputing per-layer lie directions...")
+    types_with_data = [dt for dt in deception_types if dt in results["within_type"]]
+
+    for layer in PROBE_LAYERS:
+        lie_directions_per_layer[layer] = {}
+        for dtype in types_with_data:
+            data = deception_types[dtype]
+            min_n = results["within_type"][dtype]["n_per_class"]
+            X = np.vstack([
+                np.array([d["hs"][layer] for d in data["lied"][:min_n]]),
+                np.array([d["hs"][layer] for d in data["resisted"][:min_n]]),
+            ])
+            y = np.array([1] * min_n + [0] * min_n)
+            pipe = Pipeline([
+                ("scaler", StandardScaler()),
+                ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
+            ])
+            pipe.fit(X, y)
+            coef = pipe.named_steps["clf"].coef_[0]
+            lie_directions_per_layer[layer][dtype] = coef / np.linalg.norm(coef)
+
+    # ── Cosine similarity (best-layer, for backward compat) ───────────
+    log.info("\nCosine similarity between lie directions (best-layer)...")
     types_with_dirs = list(lie_directions.keys())
 
-    # Compute random baseline for comparison
     if types_with_dirs:
         dim = len(lie_directions[types_with_dirs[0]])
         baseline = random_cosine_baseline(dim, n_pairs=10000, random_seed=RANDOM_SEED)
@@ -286,67 +310,100 @@ def main():
         for j in range(i + 1, len(types_with_dirs)):
             t1, t2 = types_with_dirs[i], types_with_dirs[j]
             cos = float(np.dot(lie_directions[t1], lie_directions[t2]))
-
-            # Is this significantly different from random?
             if types_with_dirs:
                 z_score = (cos - baseline["expected_cosine"]) / baseline["std"]
-                significant = abs(z_score) > 1.96  # 95% CI
+                significant = abs(z_score) > 1.96
             else:
                 z_score = 0.0
                 significant = False
-
             results["cosine_similarity"][f"{t1}_vs_{t2}"] = {
                 "cosine": cos,
                 "z_score": float(z_score),
                 "significant_vs_random": significant,
+                "note": "WARNING: comparing different layers! See cosine_per_layer for fair comparison.",
             }
             sig_str = "SIGNIFICANT" if significant else "not significant"
-            log.info(f"  {t1} vs {t2}: cosine = {cos:.3f} (z={z_score:.2f}, {sig_str})")
+            log.info(f"  {t1} vs {t2}: cosine = {cos:.3f} (z={z_score:.2f}, {sig_str}) "
+                     f"[NOTE: different layers!]")
 
-    # ── Cross-type transfer ────────────────────────────────────────────
-    log.info("\nCross-type transfer...")
-    for src_type in types_with_dirs:
-        for tgt_type in types_with_dirs:
-            if src_type == tgt_type:
-                continue
+    # ── Cosine similarity PER LAYER (fair comparison) ─────────────────
+    log.info("\nCosine similarity per layer (SAME layer, fair comparison)...")
+    for layer in PROBE_LAYERS:
+        layer_cosines = {}
+        for i in range(len(types_with_dirs)):
+            for j in range(i + 1, len(types_with_dirs)):
+                t1, t2 = types_with_dirs[i], types_with_dirs[j]
+                d1 = lie_directions_per_layer[layer].get(t1)
+                d2 = lie_directions_per_layer[layer].get(t2)
+                if d1 is not None and d2 is not None:
+                    cos = float(np.dot(d1, d2))
+                    layer_cosines[f"{t1}_vs_{t2}"] = cos
+        results["cosine_per_layer"][str(layer)] = layer_cosines
+        if layer_cosines:
+            avg_cos = np.mean(list(layer_cosines.values()))
+            log.info(f"  Layer {layer}: avg cosine = {avg_cos:.4f}  "
+                     f"{layer_cosines}")
 
-            src = deception_types[src_type]
-            tgt = deception_types[tgt_type]
-            layer = results["within_type"][src_type]["best_layer"]
+    # ── Cross-type transfer — SAME LAYER (fixed!) ─────────────────────
+    log.info("\nCross-type transfer (SAME layer — fixed)...")
+    for layer in PROBE_LAYERS:
+        layer_results = {}
+        for src_type in types_with_data:
+            for tgt_type in types_with_data:
+                if src_type == tgt_type:
+                    continue
 
-            min_src = min(len(src["lied"]), len(src["resisted"]))
-            min_tgt = min(len(tgt["lied"]), len(tgt["resisted"]))
-            if min_src < 5 or min_tgt < 5:
-                continue
+                src = deception_types[src_type]
+                tgt = deception_types[tgt_type]
 
-            X_train = np.vstack([
-                np.array([d["hs"][layer] for d in src["lied"][:min_src]]),
-                np.array([d["hs"][layer] for d in src["resisted"][:min_src]]),
-            ])
-            y_train = np.array([1] * min_src + [0] * min_src)
+                min_src = min(len(src["lied"]), len(src["resisted"]))
+                min_tgt = min(len(tgt["lied"]), len(tgt["resisted"]))
+                if min_src < 5 or min_tgt < 5:
+                    continue
 
-            X_test = np.vstack([
-                np.array([d["hs"][layer] for d in tgt["lied"][:min_tgt]]),
-                np.array([d["hs"][layer] for d in tgt["resisted"][:min_tgt]]),
-            ])
-            y_test = np.array([1] * min_tgt + [0] * min_tgt)
+                X_train = np.vstack([
+                    np.array([d["hs"][layer] for d in src["lied"][:min_src]]),
+                    np.array([d["hs"][layer] for d in src["resisted"][:min_src]]),
+                ])
+                y_train = np.array([1] * min_src + [0] * min_src)
 
-            pipe = Pipeline([
-                ("scaler", StandardScaler()),
-                ("clf", LogisticRegression(
-                    max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced"
-                )),
-            ])
-            pipe.fit(X_train, y_train)
-            y_pred = pipe.predict(X_test)
-            acc = balanced_accuracy_score(y_test, y_pred)
+                X_test = np.vstack([
+                    np.array([d["hs"][layer] for d in tgt["lied"][:min_tgt]]),
+                    np.array([d["hs"][layer] for d in tgt["resisted"][:min_tgt]]),
+                ])
+                y_test = np.array([1] * min_tgt + [0] * min_tgt)
 
-            results["cross_type"][f"{src_type}->{tgt_type}"] = float(acc)
-            log.info(f"  {src_type}->{tgt_type}: {acc*100:.1f}%")
+                pipe = Pipeline([
+                    ("scaler", StandardScaler()),
+                    ("clf", LogisticRegression(
+                        max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced"
+                    )),
+                ])
+                pipe.fit(X_train, y_train)
+                y_pred = pipe.predict(X_test)
+                acc = balanced_accuracy_score(y_test, y_pred)
+                layer_results[f"{src_type}->{tgt_type}"] = float(acc)
 
-    # Save JSON results
+        results["cross_type_same_layer"][str(layer)] = layer_results
+
+    # Log best cross-type results per pair
+    log.info("\n  Best cross-type transfer per pair (across layers):")
+    all_pairs = set()
+    for layer_res in results["cross_type_same_layer"].values():
+        all_pairs.update(layer_res.keys())
+    for pair in sorted(all_pairs):
+        best_acc = 0
+        best_layer = None
+        for layer_str, layer_res in results["cross_type_same_layer"].items():
+            if pair in layer_res and layer_res[pair] > best_acc:
+                best_acc = layer_res[pair]
+                best_layer = int(layer_str)
+        log.info(f"    {pair}: {best_acc*100:.1f}% (Layer {best_layer})")
+
+    # ── Save JSON results ─────────────────────────────────────────────
     output = {
         "experiment": "05_deception_types",
+        "version": "v3_same_layer_fix",
         "model": MODEL_NAME,
         "results": results,
         "elapsed_seconds": time.time() - start,
@@ -354,33 +411,39 @@ def main():
     save_results(output, "results/exp05_deception_types.json")
     log.info("\nSaved to results/exp05_deception_types.json")
 
-    # Save raw vectors and lie directions for further analysis
+    # ── Save raw vectors from ALL layers ──────────────────────────────
+    log.info("\nSaving vectors from ALL probe layers...")
     vec_data = {}
-    for dtype in ["sycophancy", "instruction_conflict", "authority_pressure"]:
-        if dtype not in results["within_type"]:
-            continue
-        data = deception_types[dtype]
-        best_layer = results["within_type"][dtype]["best_layer"]
-        min_n = results["within_type"][dtype]["n_per_class"]
-        vec_data[f"{dtype}_lied"] = np.array([d["hs"][best_layer] for d in data["lied"][:min_n]])
-        vec_data[f"{dtype}_resisted"] = np.array([d["hs"][best_layer] for d in data["resisted"][:min_n]])
 
+    for dtype in types_with_data:
+        data = deception_types[dtype]
+        min_n = results["within_type"][dtype]["n_per_class"]
+        for layer in PROBE_LAYERS:
+            vec_data[f"{dtype}_lied_L{layer}"] = np.array(
+                [d["hs"][layer] for d in data["lied"][:min_n]]
+            )
+            vec_data[f"{dtype}_resisted_L{layer}"] = np.array(
+                [d["hs"][layer] for d in data["resisted"][:min_n]]
+            )
+
+    # Also save lie directions per layer
+    for layer in PROBE_LAYERS:
+        for dtype, direction in lie_directions_per_layer[layer].items():
+            vec_data[f"lie_dir_{dtype}_L{layer}"] = direction
+
+    # Save best-layer lie directions (backward compat)
     for dtype, direction in lie_directions.items():
-        vec_data[f"lie_dir_{dtype}"] = direction
+        vec_data[f"lie_dir_{dtype}_best"] = direction
 
     vec_data["best_layers"] = np.array([
-        results["within_type"].get("sycophancy", {}).get("best_layer", -1),
-        results["within_type"].get("instruction_conflict", {}).get("best_layer", -1),
-        results["within_type"].get("authority_pressure", {}).get("best_layer", -1),
+        results["within_type"].get(dt, {}).get("best_layer", -1) for dt in types_with_data
     ])
+    vec_data["probe_layers"] = np.array(PROBE_LAYERS)
 
     np.savez_compressed("results/exp05_vectors.npz", **vec_data)
-    import os as _os
-    size_mb = _os.path.getsize("results/exp05_vectors.npz") / 1024 / 1024
+    size_mb = os.path.getsize("results/exp05_vectors.npz") / 1024 / 1024
     log.info(f"Saved vectors to results/exp05_vectors.npz ({size_mb:.1f} MB)")
-    for k, v in vec_data.items():
-        if isinstance(v, np.ndarray):
-            log.info(f"  {k}: {v.shape}")
+    log.info(f"  Contains {len(vec_data)} arrays across {len(PROBE_LAYERS)} layers x {len(types_with_data)} types")
 
     return deception_types, results, lie_directions
 

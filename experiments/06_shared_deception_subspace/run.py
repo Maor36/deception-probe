@@ -4,51 +4,38 @@ Experiment 06 — Shared Deception Subspace
 PURPOSE:
     Experiment 05 showed that different deception types (sycophancy,
     instruction conflict, authority pressure) have nearly orthogonal
-    lie directions (cosine ~0.01-0.04). But does that mean there is
-    NO shared structure at all?
+    lie directions. But does that mean there is NO shared structure?
 
     This experiment investigates whether a shared deception subspace
-    exists when we look beyond single directions — using dimensionality
-    reduction, multi-task probing, and subspace analysis.
+    exists using same-layer comparisons, dimensionality reduction,
+    multi-task probing, and subspace analysis.
 
 PREREQUISITE:
-    Must run exp05 first with vector saving enabled.
+    Must run exp05 v3+ first (saves vectors from ALL probe layers).
     Requires: results/exp05_vectors.npz
 
+CRITICAL FIX (v2):
+    All analyses now compare vectors from the SAME layer. Previous
+    version mixed vectors from different layers (16/18/20), which
+    confounded layer differences with deception type differences.
+
 ANALYSES:
-    1. PCA VISUALIZATION
-       - Project all vectors (all 3 types) into shared PCA space
-       - Check if lied/resisted clusters separate in top PCs
-       - Visualize 2D and 3D projections
-
-    2. SHARED SUBSPACE PROBE (Multi-task)
-       - Train a single probe on ALL deception types combined
-       - If accuracy > chance, there IS a shared signal
-       - Compare to within-type accuracy (how much is lost?)
-
-    3. SUBSPACE OVERLAP (Principal Angles)
-       - For each deception type, find the top-k PCA subspace of lied vs resisted
-       - Compute principal angles between subspaces
-       - Small angles = shared structure, 90° = fully independent
-
-    4. CROSS-TYPE TRANSFER WITH ALIGNMENT
-       - Use Procrustes alignment to map one type's space to another
-       - Re-test cross-type transfer after alignment
-       - If transfer improves, the structure IS shared but rotated
-
-    5. CONCATENATED LIE DIRECTION ANALYSIS
-       - Stack all 3 lie direction vectors
-       - SVD to find if they span a low-rank subspace
-       - If rank < 3, there's redundancy (shared structure)
+    1. PER-LAYER PCA — Project all types from same layer, check separation
+    2. PER-LAYER SHARED PROBE — Train on all types from same layer
+    3. PER-LAYER SUBSPACE OVERLAP — Principal angles between same-layer subspaces
+    4. PER-LAYER PROCRUSTES — Align and transfer within same layer
+    5. PER-LAYER LIE DIRECTION RANK — SVD on same-layer lie directions
 
 MODEL:   N/A (works on saved vectors, no GPU needed)
-RUNTIME: ~2 minutes on CPU
+RUNTIME: ~5 minutes on CPU
 
 USAGE:
     %run experiments/06_shared_deception_subspace/run.py
 
 CHANGELOG:
-    v1 (2026-03-21): Initial version.
+    v2 (2026-03-21): CRITICAL FIX — all analyses now use same-layer
+        vectors. Previous version mixed layers, confounding results.
+    v1 (2026-03-21): Initial version (had layer-mixing bug).
 """
 
 import sys, os
@@ -65,17 +52,14 @@ from sklearn.pipeline import Pipeline
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.metrics import balanced_accuracy_score, make_scorer
 from sklearn.decomposition import PCA
-from scipy.spatial.transform import Rotation
 from scipy.linalg import orthogonal_procrustes, svd, subspace_angles
 
-from src.utils import setup_logger, save_results, permutation_test
+from src.utils import setup_logger, save_results
 
 # ── Configuration ──────────────────────────────────────────────────────────
 VECTORS_PATH = "results/exp05_vectors.npz"
-N_PERMUTATIONS = 200
 RANDOM_SEED = 42
-PCA_DIMS = 50  # For subspace analysis
-SAVE_PLOTS = True
+PCA_SUBSPACE_DIMS = 10  # For subspace angle analysis
 
 np.random.seed(RANDOM_SEED)
 log = setup_logger("exp06")
@@ -91,393 +75,373 @@ TYPE_LABELS = {
 # ── Helper functions ──────────────────────────────────────────────────────
 
 def load_vectors():
-    """Load saved vectors from exp05."""
+    """Load saved vectors from exp05 v3+."""
     if not os.path.exists(VECTORS_PATH):
         raise FileNotFoundError(
-            f"{VECTORS_PATH} not found. Run exp05 first with vector saving enabled."
+            f"{VECTORS_PATH} not found. Run exp05 v3+ first."
         )
     data = np.load(VECTORS_PATH)
+
+    # Check for v3 format (has per-layer keys like "sycophancy_lied_L16")
+    has_layer_keys = any("_L" in k for k in data.files)
+    if not has_layer_keys:
+        raise ValueError(
+            "exp05_vectors.npz is in old format (single best-layer only). "
+            "Re-run exp05 v3 to save vectors from all layers."
+        )
+
+    probe_layers = data["probe_layers"].tolist()
     log.info(f"Loaded vectors from {VECTORS_PATH}")
-    for key in data.files:
-        log.info(f"  {key}: {data[key].shape}")
-    return data
+    log.info(f"  Probe layers: {probe_layers}")
+    log.info(f"  Total arrays: {len(data.files)}")
+    return data, probe_layers
+
+
+def get_layer_data(data, layer):
+    """Extract lied/resisted vectors for all types from a specific layer."""
+    layer_data = {}
+    for dtype in DECEPTION_TYPES:
+        lied_key = f"{dtype}_lied_L{layer}"
+        resisted_key = f"{dtype}_resisted_L{layer}"
+        if lied_key in data.files and resisted_key in data.files:
+            layer_data[dtype] = {
+                "lied": data[lied_key],
+                "resisted": data[resisted_key],
+            }
+    return layer_data
 
 
 def balanced_acc_scorer():
     return make_scorer(balanced_accuracy_score)
 
 
-# ── Analysis 1: PCA Visualization ─────────────────────────────────────────
+# ── Analysis 1: Per-Layer PCA ─────────────────────────────────────────────
 
-def analysis_pca_visualization(data):
-    """Project all vectors into shared PCA space and check separation."""
+def analysis_pca_per_layer(data, probe_layers):
+    """For each layer, project all types and check lied/resisted separation."""
     log.info("\n" + "=" * 60)
-    log.info("Analysis 1: PCA Visualization")
-    log.info("=" * 60)
-
-    # Collect all vectors with labels
-    all_vecs = []
-    all_labels = []      # 0=resisted, 1=lied
-    all_types = []       # deception type name
-    all_type_ids = []    # numeric type id
-
-    for i, dtype in enumerate(DECEPTION_TYPES):
-        lied_key = f"{dtype}_lied"
-        resisted_key = f"{dtype}_resisted"
-        if lied_key not in data.files or resisted_key not in data.files:
-            log.warning(f"  Skipping {dtype}: vectors not found")
-            continue
-
-        lied = data[lied_key]
-        resisted = data[resisted_key]
-
-        all_vecs.append(lied)
-        all_labels.extend([1] * len(lied))
-        all_types.extend([dtype] * len(lied))
-        all_type_ids.extend([i] * len(lied))
-
-        all_vecs.append(resisted)
-        all_labels.extend([0] * len(resisted))
-        all_types.extend([dtype] * len(resisted))
-        all_type_ids.extend([i] * len(resisted))
-
-    X = np.vstack(all_vecs)
-    y = np.array(all_labels)
-    type_ids = np.array(all_type_ids)
-
-    log.info(f"  Total vectors: {X.shape[0]} x {X.shape[1]}")
-    log.info(f"  Lied: {sum(y==1)}, Resisted: {sum(y==0)}")
-
-    # Fit PCA
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    pca = PCA(n_components=min(50, X.shape[0], X.shape[1]))
-    X_pca = pca.fit_transform(X_scaled)
-
-    log.info(f"  Explained variance (top 10 PCs): {pca.explained_variance_ratio_[:10].round(4)}")
-    log.info(f"  Cumulative variance (10 PCs): {pca.explained_variance_ratio_[:10].sum():.4f}")
-    log.info(f"  Cumulative variance (20 PCs): {pca.explained_variance_ratio_[:20].sum():.4f}")
-
-    # Check: can we separate lied/resisted in PCA space?
-    for n_pcs in [2, 5, 10, 20]:
-        pipe = Pipeline([
-            ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
-        ])
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_SEED)
-        scores = cross_val_score(pipe, X_pca[:, :n_pcs], y, cv=cv, scoring=balanced_acc_scorer())
-        log.info(f"  Lied vs Resisted in {n_pcs} PCs (all types mixed): {scores.mean()*100:.1f}% ± {scores.std()*100:.1f}%")
-
-    # Check: can we separate deception TYPES in PCA space?
-    for n_pcs in [2, 5, 10]:
-        pipe = Pipeline([
-            ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, multi_class="multinomial")),
-        ])
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_SEED)
-        scores = cross_val_score(pipe, X_pca[:, :n_pcs], type_ids, cv=cv, scoring="accuracy")
-        log.info(f"  Type classification in {n_pcs} PCs: {scores.mean()*100:.1f}% ± {scores.std()*100:.1f}%")
-
-    # Save PCA coordinates for plotting
-    if SAVE_PLOTS:
-        np.savez_compressed(
-            "results/exp06_pca_coords.npz",
-            X_pca=X_pca,
-            labels=y,
-            type_ids=type_ids,
-            explained_variance=pca.explained_variance_ratio_,
-        )
-        log.info("  Saved PCA coordinates to results/exp06_pca_coords.npz")
-
-    return X, y, type_ids, X_pca, pca
-
-
-# ── Analysis 2: Multi-task Shared Probe ───────────────────────────────────
-
-def analysis_shared_probe(X, y, type_ids):
-    """Train a single probe on all deception types combined."""
-    log.info("\n" + "=" * 60)
-    log.info("Analysis 2: Shared Probe (Multi-task)")
+    log.info("Analysis 1: Per-Layer PCA")
     log.info("=" * 60)
 
     results = {}
 
-    # A) Single probe on all data
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    pipe = Pipeline([
-        ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
-    ])
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_SEED)
-    scores = cross_val_score(pipe, X_scaled, y, cv=cv, scoring=balanced_acc_scorer())
-    results["all_types_combined"] = {
-        "accuracy": float(scores.mean()),
-        "std": float(scores.std()),
-    }
-    log.info(f"  All types combined: {scores.mean()*100:.1f}% ± {scores.std()*100:.1f}%")
-
-    # B) Leave-one-type-out: train on 2 types, test on 3rd
-    for test_type_id, test_type_name in enumerate(DECEPTION_TYPES):
-        train_mask = type_ids != test_type_id
-        test_mask = type_ids == test_type_id
-
-        if test_mask.sum() < 5 or train_mask.sum() < 10:
+    for layer in probe_layers:
+        layer_data = get_layer_data(data, layer)
+        if len(layer_data) < 2:
             continue
 
+        # Collect all vectors from this layer
+        all_vecs, all_labels, all_type_ids = [], [], []
+        for i, dtype in enumerate(DECEPTION_TYPES):
+            if dtype not in layer_data:
+                continue
+            lied = layer_data[dtype]["lied"]
+            resisted = layer_data[dtype]["resisted"]
+            all_vecs.extend([lied, resisted])
+            all_labels.extend([1]*len(lied) + [0]*len(resisted))
+            all_type_ids.extend([i]*len(lied) + [i]*len(resisted))
+
+        X = np.vstack(all_vecs)
+        y = np.array(all_labels)
+        type_ids = np.array(all_type_ids)
+
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        pca = PCA(n_components=min(50, X.shape[0]-1))
+        X_pca = pca.fit_transform(X_scaled)
+
+        layer_result = {"n_samples": len(X)}
+
+        # Lied vs Resisted classification in PCA space
+        for n_pcs in [2, 5, 10, 20]:
+            if n_pcs > X_pca.shape[1]:
+                continue
+            pipe = Pipeline([
+                ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
+            ])
+            cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_SEED)
+            scores = cross_val_score(pipe, X_pca[:, :n_pcs], y, cv=cv, scoring=balanced_acc_scorer())
+            layer_result[f"lied_vs_resisted_{n_pcs}pcs"] = {
+                "accuracy": float(scores.mean()),
+                "std": float(scores.std()),
+            }
+
+        # Type classification (should be LOW if same-layer vectors are similar)
+        pipe = Pipeline([
+            ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED)),
+        ])
+        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_SEED)
+        scores = cross_val_score(pipe, X_pca[:, :10], type_ids, cv=cv, scoring="accuracy")
+        layer_result["type_classification_10pcs"] = {
+            "accuracy": float(scores.mean()),
+            "std": float(scores.std()),
+        }
+
+        results[str(layer)] = layer_result
+
+        lie_acc_20 = layer_result.get("lied_vs_resisted_20pcs", {}).get("accuracy", 0)
+        type_acc = layer_result["type_classification_10pcs"]["accuracy"]
+        log.info(f"  Layer {layer}: lie detect (20 PCs)={lie_acc_20*100:.1f}%, "
+                 f"type classify={type_acc*100:.1f}%")
+
+    return results
+
+
+# ── Analysis 2: Per-Layer Shared Probe ────────────────────────────────────
+
+def analysis_shared_probe_per_layer(data, probe_layers):
+    """For each layer, train one probe on all types combined."""
+    log.info("\n" + "=" * 60)
+    log.info("Analysis 2: Per-Layer Shared Probe")
+    log.info("=" * 60)
+
+    results = {}
+
+    for layer in probe_layers:
+        layer_data = get_layer_data(data, layer)
+        if len(layer_data) < 2:
+            continue
+
+        # All types combined
+        all_vecs, all_labels, all_type_ids = [], [], []
+        for i, dtype in enumerate(DECEPTION_TYPES):
+            if dtype not in layer_data:
+                continue
+            lied = layer_data[dtype]["lied"]
+            resisted = layer_data[dtype]["resisted"]
+            all_vecs.extend([lied, resisted])
+            all_labels.extend([1]*len(lied) + [0]*len(resisted))
+            all_type_ids.extend([i]*len(lied) + [i]*len(resisted))
+
+        X = np.vstack(all_vecs)
+        y = np.array(all_labels)
+        type_ids = np.array(all_type_ids)
+
+        # Combined probe
         pipe = Pipeline([
             ("scaler", StandardScaler()),
             ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
         ])
-        pipe.fit(X[train_mask], y[train_mask])
-        y_pred = pipe.predict(X[test_mask])
-        acc = balanced_accuracy_score(y[test_mask], y_pred)
+        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_SEED)
+        scores = cross_val_score(pipe, X, y, cv=cv, scoring=balanced_acc_scorer())
 
-        results[f"leave_out_{test_type_name}"] = {
-            "accuracy": float(acc),
-            "train_types": [t for i, t in enumerate(DECEPTION_TYPES) if i != test_type_id],
-            "test_type": test_type_name,
-            "n_train": int(train_mask.sum()),
-            "n_test": int(test_mask.sum()),
+        layer_result = {
+            "combined_accuracy": float(scores.mean()),
+            "combined_std": float(scores.std()),
         }
-        log.info(f"  Train on others, test on {TYPE_LABELS[test_type_name]}: {acc*100:.1f}%")
 
-    # C) Permutation test on combined probe
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    pipe = Pipeline([
-        ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
-    ])
-    pipe.fit(X_scaled, y)
-    y_pred = pipe.predict(X_scaled)
-    observed_acc = balanced_accuracy_score(y, y_pred)
-    perm = permutation_test(X, y, observed_acc, N_PERMUTATIONS, random_seed=RANDOM_SEED)
-    results["permutation_test"] = {
-        "observed": float(observed_acc),
-        "p_value": float(perm["p_value"]),
-    }
-    log.info(f"  Combined probe permutation test: p={perm['p_value']:.4f}")
+        # Leave-one-type-out
+        for test_type_id, test_type_name in enumerate(DECEPTION_TYPES):
+            if test_type_name not in layer_data:
+                continue
+            train_mask = type_ids != test_type_id
+            test_mask = type_ids == test_type_id
+            if test_mask.sum() < 5 or train_mask.sum() < 10:
+                continue
+
+            pipe = Pipeline([
+                ("scaler", StandardScaler()),
+                ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
+            ])
+            pipe.fit(X[train_mask], y[train_mask])
+            y_pred = pipe.predict(X[test_mask])
+            acc = balanced_accuracy_score(y[test_mask], y_pred)
+            layer_result[f"leave_out_{test_type_name}"] = float(acc)
+
+        results[str(layer)] = layer_result
+
+        combined = layer_result["combined_accuracy"]
+        leave_outs = {k: v for k, v in layer_result.items() if k.startswith("leave_out_")}
+        leave_str = ", ".join(f"{k.replace('leave_out_','')}={v*100:.1f}%" for k, v in leave_outs.items())
+        log.info(f"  Layer {layer}: combined={combined*100:.1f}%, {leave_str}")
 
     return results
 
 
-# ── Analysis 3: Subspace Overlap (Principal Angles) ───────────────────────
+# ── Analysis 3: Per-Layer Subspace Overlap ────────────────────────────────
 
-def analysis_subspace_overlap(data):
-    """Compute principal angles between deception type subspaces."""
+def analysis_subspace_overlap_per_layer(data, probe_layers):
+    """Compute principal angles between type subspaces within each layer."""
     log.info("\n" + "=" * 60)
-    log.info("Analysis 3: Subspace Overlap (Principal Angles)")
+    log.info("Analysis 3: Per-Layer Subspace Overlap (Principal Angles)")
     log.info("=" * 60)
 
     results = {}
 
-    # For each type, compute the subspace that separates lied from resisted
-    subspaces = {}
-    for dtype in DECEPTION_TYPES:
-        lied_key = f"{dtype}_lied"
-        resisted_key = f"{dtype}_resisted"
-        if lied_key not in data.files:
+    for layer in probe_layers:
+        layer_data = get_layer_data(data, layer)
+        if len(layer_data) < 2:
             continue
 
-        lied = data[lied_key]
-        resisted = data[resisted_key]
-
-        # Compute difference vectors (lied - resisted mean)
-        X = np.vstack([lied, resisted])
-        y = np.array([1]*len(lied) + [0]*len(resisted))
-
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-
-        # Get top-k PCA directions of the lied-resisted difference
-        pca = PCA(n_components=min(PCA_DIMS, len(X)-1))
-        X_pca = pca.fit_transform(X_scaled)
-
-        # Train probe in PCA space to find discriminative subspace
-        pipe = Pipeline([
-            ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
-        ])
-        pipe.fit(X_pca, y)
-
-        # The probe's weight vector in PCA space, projected back to original
-        coef_pca = pipe.named_steps["clf"].coef_[0]
-        # Top discriminative directions in original space
-        discriminative_dir = pca.components_.T @ coef_pca
-        discriminative_dir = discriminative_dir / np.linalg.norm(discriminative_dir)
-
-        # Store the top PCA components as the subspace
-        subspaces[dtype] = pca.components_[:10].T  # (4096, 10) — top 10 PCs
-
-        log.info(f"  {TYPE_LABELS[dtype]}: subspace computed (top 10 PCs, "
-                 f"variance explained: {pca.explained_variance_ratio_[:10].sum():.3f})")
-
-    # Compute principal angles between all pairs
-    for i in range(len(DECEPTION_TYPES)):
-        for j in range(i + 1, len(DECEPTION_TYPES)):
-            t1, t2 = DECEPTION_TYPES[i], DECEPTION_TYPES[j]
-            if t1 not in subspaces or t2 not in subspaces:
+        # Compute PCA subspace for each type at this layer
+        subspaces = {}
+        for dtype in DECEPTION_TYPES:
+            if dtype not in layer_data:
                 continue
+            lied = layer_data[dtype]["lied"]
+            resisted = layer_data[dtype]["resisted"]
+            X = np.vstack([lied, resisted])
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+            n_comp = min(PCA_SUBSPACE_DIMS, X.shape[0]-1)
+            pca = PCA(n_components=n_comp)
+            pca.fit(X_scaled)
+            subspaces[dtype] = pca.components_.T  # (4096, n_comp)
 
-            angles = subspace_angles(subspaces[t1], subspaces[t2])
-            angles_deg = np.degrees(angles)
+        # Principal angles between all pairs
+        layer_result = {}
+        types_list = [t for t in DECEPTION_TYPES if t in subspaces]
+        for i in range(len(types_list)):
+            for j in range(i+1, len(types_list)):
+                t1, t2 = types_list[i], types_list[j]
+                angles = subspace_angles(subspaces[t1], subspaces[t2])
+                angles_deg = np.degrees(angles)
+                layer_result[f"{t1}_vs_{t2}"] = {
+                    "min_angle": float(angles_deg.min()),
+                    "mean_angle": float(angles_deg.mean()),
+                    "max_angle": float(angles_deg.max()),
+                    "angles": angles_deg.tolist(),
+                }
 
-            results[f"{t1}_vs_{t2}"] = {
-                "principal_angles_deg": angles_deg.tolist(),
-                "min_angle": float(angles_deg.min()),
-                "max_angle": float(angles_deg.max()),
-                "mean_angle": float(angles_deg.mean()),
-                "median_angle": float(np.median(angles_deg)),
-            }
+        results[str(layer)] = layer_result
 
-            log.info(f"  {TYPE_LABELS[t1]} vs {TYPE_LABELS[t2]}:")
-            log.info(f"    Angles: {angles_deg.round(1)}")
-            log.info(f"    Min: {angles_deg.min():.1f}°, Mean: {angles_deg.mean():.1f}°, Max: {angles_deg.max():.1f}°")
-            if angles_deg.min() < 30:
-                log.info(f"    → SHARED STRUCTURE detected (min angle < 30°)")
-            elif angles_deg.min() < 60:
-                log.info(f"    → PARTIAL overlap (min angle 30-60°)")
-            else:
-                log.info(f"    → INDEPENDENT subspaces (min angle > 60°)")
+        # Log summary
+        for pair, vals in layer_result.items():
+            status = "SHARED" if vals["min_angle"] < 30 else "PARTIAL" if vals["min_angle"] < 60 else "INDEPENDENT"
+            log.info(f"  Layer {layer} {pair}: min={vals['min_angle']:.1f}°, "
+                     f"mean={vals['mean_angle']:.1f}° → {status}")
 
     return results
 
 
-# ── Analysis 4: Procrustes-Aligned Cross-Type Transfer ────────────────────
+# ── Analysis 4: Per-Layer Procrustes Transfer ─────────────────────────────
 
-def analysis_procrustes_transfer(data):
-    """Align deception type spaces with Procrustes and re-test transfer."""
+def analysis_procrustes_per_layer(data, probe_layers):
+    """Align type spaces with Procrustes within each layer."""
     log.info("\n" + "=" * 60)
-    log.info("Analysis 4: Procrustes-Aligned Cross-Type Transfer")
+    log.info("Analysis 4: Per-Layer Procrustes-Aligned Transfer")
     log.info("=" * 60)
 
     results = {}
 
-    for i in range(len(DECEPTION_TYPES)):
-        for j in range(len(DECEPTION_TYPES)):
-            if i == j:
-                continue
+    for layer in probe_layers:
+        layer_data = get_layer_data(data, layer)
+        if len(layer_data) < 2:
+            continue
 
-            src_type = DECEPTION_TYPES[i]
-            tgt_type = DECEPTION_TYPES[j]
+        layer_result = {}
+        types_list = [t for t in DECEPTION_TYPES if t in layer_data]
 
-            src_lied = data[f"{src_type}_lied"]
-            src_resisted = data[f"{src_type}_resisted"]
-            tgt_lied = data[f"{tgt_type}_lied"]
-            tgt_resisted = data[f"{tgt_type}_resisted"]
+        for src_type in types_list:
+            for tgt_type in types_list:
+                if src_type == tgt_type:
+                    continue
 
-            # Build source and target datasets
-            X_src = np.vstack([src_lied, src_resisted])
-            y_src = np.array([1]*len(src_lied) + [0]*len(src_resisted))
-            X_tgt = np.vstack([tgt_lied, tgt_resisted])
-            y_tgt = np.array([1]*len(tgt_lied) + [0]*len(tgt_resisted))
+                src_lied = layer_data[src_type]["lied"]
+                src_resisted = layer_data[src_type]["resisted"]
+                tgt_lied = layer_data[tgt_type]["lied"]
+                tgt_resisted = layer_data[tgt_type]["resisted"]
 
-            # Standardize
-            scaler_src = StandardScaler()
-            X_src_s = scaler_src.fit_transform(X_src)
-            scaler_tgt = StandardScaler()
-            X_tgt_s = scaler_tgt.fit_transform(X_tgt)
+                X_src = np.vstack([src_lied, src_resisted])
+                y_src = np.array([1]*len(src_lied) + [0]*len(src_resisted))
+                X_tgt = np.vstack([tgt_lied, tgt_resisted])
+                y_tgt = np.array([1]*len(tgt_lied) + [0]*len(tgt_resisted))
 
-            # Reduce dimensionality for Procrustes (needs square or fewer dims than samples)
-            n_dims = min(50, X_src_s.shape[0], X_tgt_s.shape[0])
-            pca_src = PCA(n_components=n_dims)
-            pca_tgt = PCA(n_components=n_dims)
-            X_src_pca = pca_src.fit_transform(X_src_s)
-            X_tgt_pca = pca_tgt.fit_transform(X_tgt_s)
+                # Reduce dims for Procrustes
+                n_dims = min(50, X_src.shape[0]-1, X_tgt.shape[0]-1)
+                scaler_src = StandardScaler()
+                scaler_tgt = StandardScaler()
+                X_src_s = scaler_src.fit_transform(X_src)
+                X_tgt_s = scaler_tgt.fit_transform(X_tgt)
 
-            # Baseline: train on source, test on target (no alignment)
-            pipe = Pipeline([
-                ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
-            ])
-            pipe.fit(X_src_pca, y_src)
-            baseline_acc = balanced_accuracy_score(y_tgt, pipe.predict(X_tgt_pca))
+                pca_src = PCA(n_components=n_dims)
+                pca_tgt = PCA(n_components=n_dims)
+                X_src_pca = pca_src.fit_transform(X_src_s)
+                X_tgt_pca = pca_tgt.fit_transform(X_tgt_s)
 
-            # Procrustes alignment: find rotation R that maps src means to tgt means
-            # Use class centroids as anchor points
-            src_centroids = np.array([X_src_pca[y_src==0].mean(0), X_src_pca[y_src==1].mean(0)])
-            tgt_centroids = np.array([X_tgt_pca[y_tgt==0].mean(0), X_tgt_pca[y_tgt==1].mean(0)])
+                # Baseline: no alignment
+                pipe = Pipeline([
+                    ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
+                ])
+                pipe.fit(X_src_pca, y_src)
+                baseline_acc = balanced_accuracy_score(y_tgt, pipe.predict(X_tgt_pca))
 
-            R, scale = orthogonal_procrustes(src_centroids, tgt_centroids)
+                # Procrustes alignment using class centroids
+                src_centroids = np.array([X_src_pca[y_src==0].mean(0), X_src_pca[y_src==1].mean(0)])
+                tgt_centroids = np.array([X_tgt_pca[y_tgt==0].mean(0), X_tgt_pca[y_tgt==1].mean(0)])
+                R, _ = orthogonal_procrustes(src_centroids, tgt_centroids)
 
-            # Apply rotation to source-trained probe predictions
-            X_tgt_aligned = X_tgt_pca @ R
-            pipe_aligned = Pipeline([
-                ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
-            ])
-            pipe_aligned.fit(X_src_pca, y_src)
-            aligned_acc = balanced_accuracy_score(y_tgt, pipe_aligned.predict(X_tgt_aligned))
+                X_tgt_aligned = X_tgt_pca @ R
+                pipe_aligned = Pipeline([
+                    ("clf", LogisticRegression(max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced")),
+                ])
+                pipe_aligned.fit(X_src_pca, y_src)
+                aligned_acc = balanced_accuracy_score(y_tgt, pipe_aligned.predict(X_tgt_aligned))
 
-            results[f"{src_type}->{tgt_type}"] = {
-                "baseline_acc": float(baseline_acc),
-                "aligned_acc": float(aligned_acc),
-                "improvement": float(aligned_acc - baseline_acc),
-            }
+                layer_result[f"{src_type}->{tgt_type}"] = {
+                    "baseline": float(baseline_acc),
+                    "aligned": float(aligned_acc),
+                    "improvement": float(aligned_acc - baseline_acc),
+                }
 
-            improvement = "↑" if aligned_acc > baseline_acc else "↓" if aligned_acc < baseline_acc else "="
-            log.info(f"  {TYPE_LABELS[src_type]} → {TYPE_LABELS[tgt_type]}: "
-                     f"baseline={baseline_acc*100:.1f}%, aligned={aligned_acc*100:.1f}% {improvement}")
+        results[str(layer)] = layer_result
+
+        # Log best improvements
+        if layer_result:
+            improvements = [(k, v["improvement"]) for k, v in layer_result.items()]
+            avg_imp = np.mean([imp for _, imp in improvements])
+            best_pair, best_imp = max(improvements, key=lambda x: x[1])
+            log.info(f"  Layer {layer}: avg improvement={avg_imp*100:+.1f}%, "
+                     f"best={best_pair} ({best_imp*100:+.1f}%)")
 
     return results
 
 
-# ── Analysis 5: Lie Direction SVD (Rank Analysis) ─────────────────────────
+# ── Analysis 5: Per-Layer Lie Direction Rank ──────────────────────────────
 
-def analysis_lie_direction_rank(data):
-    """Check if the 3 lie directions span a low-rank subspace."""
+def analysis_rank_per_layer(data, probe_layers):
+    """Check if lie directions are independent at each layer."""
     log.info("\n" + "=" * 60)
-    log.info("Analysis 5: Lie Direction Rank Analysis")
+    log.info("Analysis 5: Per-Layer Lie Direction Rank")
     log.info("=" * 60)
 
     results = {}
 
-    # Stack lie direction vectors
-    directions = []
-    names = []
-    for dtype in DECEPTION_TYPES:
-        key = f"lie_dir_{dtype}"
-        if key in data.files:
-            directions.append(data[key])
-            names.append(dtype)
+    for layer in probe_layers:
+        directions = []
+        names = []
+        for dtype in DECEPTION_TYPES:
+            key = f"lie_dir_{dtype}_L{layer}"
+            if key in data.files:
+                directions.append(data[key])
+                names.append(dtype)
 
-    if len(directions) < 2:
-        log.warning("  Not enough lie directions found")
-        return results
+        if len(directions) < 2:
+            continue
 
-    D = np.array(directions)  # (3, 4096)
-    log.info(f"  Lie direction matrix: {D.shape}")
+        D = np.array(directions)
+        U, S, Vt = svd(D, full_matrices=False)
+        relative = S / S[0]
 
-    # SVD
-    U, S, Vt = svd(D, full_matrices=False)
-    log.info(f"  Singular values: {S.round(4)}")
-    log.info(f"  Relative magnitudes: {(S / S[0]).round(4)}")
+        # Pairwise cosines at this layer
+        cosines = {}
+        for i in range(len(directions)):
+            for j in range(i+1, len(directions)):
+                cos = float(np.dot(directions[i], directions[j]))
+                cosines[f"{names[i]}_vs_{names[j]}"] = cos
 
-    # Effective rank
-    total_var = (S**2).sum()
-    cumvar = np.cumsum(S**2) / total_var
-    log.info(f"  Cumulative variance: {cumvar.round(4)}")
+        effective_rank = int(np.sum(relative > 0.1))
 
-    if S[1] / S[0] < 0.1:
-        log.info("  → RANK 1: All lie directions are essentially the same!")
-    elif S[2] / S[0] < 0.1:
-        log.info("  → RANK 2: Two independent lie directions (one pair is redundant)")
-    else:
-        log.info("  → RANK 3: All three lie directions are independent")
+        results[str(layer)] = {
+            "singular_values": S.tolist(),
+            "relative_magnitudes": relative.tolist(),
+            "effective_rank": effective_rank,
+            "pairwise_cosines": cosines,
+        }
 
-    # Pairwise cosines (repeat from exp05 for completeness)
-    log.info("\n  Pairwise cosines between lie directions:")
-    for i in range(len(directions)):
-        for j in range(i+1, len(directions)):
-            cos = float(np.dot(directions[i], directions[j]))
-            log.info(f"    {TYPE_LABELS[names[i]]} vs {TYPE_LABELS[names[j]]}: {cos:.4f}")
-
-    results = {
-        "singular_values": S.tolist(),
-        "relative_magnitudes": (S / S[0]).tolist(),
-        "cumulative_variance": cumvar.tolist(),
-        "effective_rank": int(np.sum(S / S[0] > 0.1)),
-        "pairwise_cosines": {},
-    }
-    for i in range(len(directions)):
-        for j in range(i+1, len(directions)):
-            results["pairwise_cosines"][f"{names[i]}_vs_{names[j]}"] = float(
-                np.dot(directions[i], directions[j])
-            )
+        avg_cos = np.mean(list(cosines.values())) if cosines else 0
+        log.info(f"  Layer {layer}: rank={effective_rank}/3, "
+                 f"SVs={S.round(3)}, avg_cosine={avg_cos:.4f}")
 
     return results
 
@@ -486,53 +450,91 @@ def analysis_lie_direction_rank(data):
 
 def main():
     log.info("=" * 60)
-    log.info("Experiment 06: Shared Deception Subspace")
+    log.info("Experiment 06: Shared Deception Subspace (v2 — same-layer fix)")
     log.info("=" * 60)
     start = time.time()
 
-    data = load_vectors()
+    data, probe_layers = load_vectors()
 
     # Run all analyses
-    X, y, type_ids, X_pca, pca = analysis_pca_visualization(data)
-    shared_probe_results = analysis_shared_probe(X, y, type_ids)
-    subspace_results = analysis_subspace_overlap(data)
-    procrustes_results = analysis_procrustes_transfer(data)
-    rank_results = analysis_lie_direction_rank(data)
+    pca_results = analysis_pca_per_layer(data, probe_layers)
+    shared_probe_results = analysis_shared_probe_per_layer(data, probe_layers)
+    subspace_results = analysis_subspace_overlap_per_layer(data, probe_layers)
+    procrustes_results = analysis_procrustes_per_layer(data, probe_layers)
+    rank_results = analysis_rank_per_layer(data, probe_layers)
 
-    # Summary
+    # ── Summary ───────────────────────────────────────────────────────
     log.info("\n" + "=" * 60)
-    log.info("SUMMARY")
+    log.info("SUMMARY — Best results across layers")
     log.info("=" * 60)
 
-    combined_acc = shared_probe_results.get("all_types_combined", {}).get("accuracy", 0)
-    log.info(f"  Combined probe accuracy: {combined_acc*100:.1f}%")
+    # Best combined probe
+    best_combined = 0
+    best_combined_layer = None
+    for layer_str, res in shared_probe_results.items():
+        acc = res.get("combined_accuracy", 0)
+        if acc > best_combined:
+            best_combined = acc
+            best_combined_layer = layer_str
+    log.info(f"  Best combined probe: {best_combined*100:.1f}% (Layer {best_combined_layer})")
 
-    for key, val in shared_probe_results.items():
-        if key.startswith("leave_out_"):
-            log.info(f"  {key}: {val['accuracy']*100:.1f}%")
+    # Best leave-one-out
+    for dtype in DECEPTION_TYPES:
+        best_loo = 0
+        best_loo_layer = None
+        for layer_str, res in shared_probe_results.items():
+            acc = res.get(f"leave_out_{dtype}", 0)
+            if acc > best_loo:
+                best_loo = acc
+                best_loo_layer = layer_str
+        log.info(f"  Best leave-out {TYPE_LABELS[dtype]}: {best_loo*100:.1f}% (Layer {best_loo_layer})")
 
-    effective_rank = rank_results.get("effective_rank", "?")
-    log.info(f"  Lie direction effective rank: {effective_rank}/3")
+    # Best Procrustes improvement
+    best_proc_imp = -1
+    best_proc_pair = ""
+    best_proc_layer = ""
+    for layer_str, layer_res in procrustes_results.items():
+        for pair, vals in layer_res.items():
+            if vals["improvement"] > best_proc_imp:
+                best_proc_imp = vals["improvement"]
+                best_proc_pair = pair
+                best_proc_layer = layer_str
+    log.info(f"  Best Procrustes improvement: {best_proc_imp*100:+.1f}% "
+             f"({best_proc_pair}, Layer {best_proc_layer})")
 
-    if combined_acc > 0.60:
+    # Smallest principal angle
+    smallest_angle = 90
+    smallest_pair = ""
+    smallest_layer = ""
+    for layer_str, layer_res in subspace_results.items():
+        for pair, vals in layer_res.items():
+            if vals["min_angle"] < smallest_angle:
+                smallest_angle = vals["min_angle"]
+                smallest_pair = pair
+                smallest_layer = layer_str
+    log.info(f"  Smallest principal angle: {smallest_angle:.1f}° "
+             f"({smallest_pair}, Layer {smallest_layer})")
+
+    # Conclusion
+    if best_combined > 0.65:
         log.info("\n  CONCLUSION: A shared deception subspace EXISTS.")
-        log.info("  Different deception types share detectable internal structure,")
-        log.info("  even though their primary lie directions are orthogonal.")
-    elif combined_acc > 0.55:
+        log.info("  When comparing from the SAME layer, different deception types")
+        log.info("  share detectable internal structure.")
+    elif best_combined > 0.55:
         log.info("\n  CONCLUSION: WEAK shared structure detected.")
-        log.info("  Some commonality exists but types are mostly independent.")
     else:
         log.info("\n  CONCLUSION: No shared deception subspace found.")
-        log.info("  Each deception type uses a truly independent mechanism.")
 
-    # Save all results
+    # Save
     output = {
         "experiment": "06_shared_deception_subspace",
+        "version": "v2_same_layer_fix",
         "results": {
-            "shared_probe": shared_probe_results,
-            "subspace_overlap": subspace_results,
-            "procrustes_transfer": procrustes_results,
-            "lie_direction_rank": rank_results,
+            "pca_per_layer": pca_results,
+            "shared_probe_per_layer": shared_probe_results,
+            "subspace_overlap_per_layer": subspace_results,
+            "procrustes_per_layer": procrustes_results,
+            "lie_direction_rank_per_layer": rank_results,
         },
         "elapsed_seconds": time.time() - start,
     }
