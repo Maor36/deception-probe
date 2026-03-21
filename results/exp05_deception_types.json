@@ -1,0 +1,59 @@
+{
+  "experiment": "05_deception_types",
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "results": {
+    "within_type": {
+      "sycophancy": {
+        "best_layer": 16,
+        "accuracy": 0.7950549450549451,
+        "p_value": 0.0,
+        "n_per_class": 66
+      },
+      "instruction_conflict": {
+        "best_layer": 18,
+        "accuracy": 0.7028486394557822,
+        "p_value": 0.0,
+        "n_per_class": 244
+      },
+      "authority_pressure": {
+        "best_layer": 20,
+        "accuracy": 0.6804347826086957,
+        "p_value": 0.0,
+        "n_per_class": 119
+      }
+    },
+    "cross_type": {
+      "sycophancy->instruction_conflict": 0.5102459016393442,
+      "sycophancy->authority_pressure": 0.5042016806722689,
+      "instruction_conflict->sycophancy": 0.5454545454545455,
+      "instruction_conflict->authority_pressure": 0.5252100840336135,
+      "authority_pressure->sycophancy": 0.5984848484848485,
+      "authority_pressure->instruction_conflict": 0.5881147540983607
+    },
+    "cosine_similarity": {
+      "sycophancy_vs_instruction_conflict": {
+        "cosine": 0.01405847071291632,
+        "z_score": 0.8630957933129138,
+        "significant_vs_random": false
+      },
+      "sycophancy_vs_authority_pressure": {
+        "cosine": 0.0054770430359763825,
+        "z_score": 0.31867063388694905,
+        "significant_vs_random": false
+      },
+      "instruction_conflict_vs_authority_pressure": {
+        "cosine": 0.03610176960030932,
+        "z_score": 2.2615724760788924,
+        "significant_vs_random": true
+      }
+    },
+    "random_cosine_baseline": {
+      "expected_cosine": 0.00045404042465540764,
+      "std": 0.0157623642632315,
+      "dim": 4096,
+      "n_pairs": 10000,
+      "theoretical_std": 0.015625
+    }
+  },
+  "elapsed_seconds": 2537.747077703476
+}
