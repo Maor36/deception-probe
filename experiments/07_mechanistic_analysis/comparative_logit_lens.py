@@ -272,14 +272,14 @@ def get_best_rank(logits, token_ids):
     ranks = torch.zeros(logits.shape[0], dtype=torch.long)
     ranks[sorted_indices] = torch.arange(len(logits))
 
-    probs = torch.softmax(logits, dim=-1)
+    probs = torch.softmax(logits.detach(), dim=-1)
 
     best_rank = len(logits)
     best_prob = 0.0
     for tid in token_ids:
         if 0 <= tid < len(logits):
             r = int(ranks[tid])
-            p = float(probs[tid])
+            p = float(probs[tid].detach())
             if r < best_rank:
                 best_rank = r
                 best_prob = p
@@ -290,10 +290,19 @@ def analyze_trajectory(all_logits, correct_tids, wrong_tids, n_layers):
     """
     Analyze the rank trajectory of correct vs wrong tokens.
     Returns dict with per-layer data and the "flip layer".
-    """
-    trajectory = []
-    flip_layer = None
 
+    The flip layer is defined as the earliest layer L (starting from
+    n_layers // 4, to skip noisy early embedding layers) such that
+    the wrong answer outranks the correct answer at L and at least
+    SUSTAIN_WINDOW-1 of the following layers. This avoids spurious
+    flips in early layers where logit-lens projections are unreliable
+    (the unembedding matrix is only trained to interpret the final
+    layer's output, so early-layer projections are noisy).
+    """
+    SUSTAIN_WINDOW = 3  # wrong must outrank correct for 3 consecutive layers
+    MIN_LAYER = n_layers // 4  # skip first quarter (noisy embedding layers)
+
+    trajectory = []
     for layer_idx in range(n_layers + 1):
         logits = all_logits[layer_idx]
         correct_rank, correct_prob = get_best_rank(logits, correct_tids)
@@ -307,8 +316,33 @@ def analyze_trajectory(all_logits, correct_tids, wrong_tids, n_layers):
             "wrong_prob": wrong_prob,
         })
 
-        if flip_layer is None and wrong_rank < correct_rank:
-            flip_layer = layer_idx
+    # Find sustained flip: earliest layer >= MIN_LAYER where wrong outranks
+    # correct for SUSTAIN_WINDOW consecutive layers
+    flip_layer = None
+    for start in range(MIN_LAYER, n_layers + 1 - SUSTAIN_WINDOW + 1):
+        sustained = True
+        for offset in range(SUSTAIN_WINDOW):
+            t = trajectory[start + offset]
+            if t["wrong_rank"] >= t["correct_rank"]:
+                sustained = False
+                break
+        if sustained:
+            flip_layer = start
+            break
+
+    # Fallback: if no sustained flip found, try the last layer only
+    # (the model's final prediction IS the lie, so the flip must exist somewhere)
+    if flip_layer is None:
+        last = trajectory[-1]
+        if last["wrong_rank"] < last["correct_rank"]:
+            # Walk backwards to find where it started
+            for layer_idx in range(n_layers, MIN_LAYER - 1, -1):
+                t = trajectory[layer_idx]
+                if t["wrong_rank"] >= t["correct_rank"]:
+                    flip_layer = layer_idx + 1
+                    break
+            else:
+                flip_layer = MIN_LAYER  # wrong outranks from MIN_LAYER onward
 
     return {"trajectory": trajectory, "flip_layer": flip_layer, "n_layers": n_layers}
 
@@ -358,7 +392,7 @@ def plot_flip_layer_comparison(flip_layers_by_type, n_layers, output_path):
             colors_for_box.append(colors[dtype])
 
     if data_for_box:
-        bp = ax.boxplot(data_for_box, labels=labels_for_box, patch_artist=True,
+        bp = ax.boxplot(data_for_box, tick_labels=labels_for_box, patch_artist=True,
                         widths=0.6, showmeans=True,
                         meanprops=dict(marker="D", markerfacecolor="black", markersize=6))
         for patch, color in zip(bp["boxes"], colors_for_box):
